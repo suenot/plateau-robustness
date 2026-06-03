@@ -1,0 +1,410 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+
+\graphicspath{{figures/}}
+\newcommand{\sr}{\mathrm{SR}}
+\newcommand{\theyll}{\theta}
+
+\title{\bfseries Plateaus, Peaks, and the Probability of Backtest Overfitting:\\
+A Controlled Validation of Parameter-Robustness Heuristics}
+
+\author{Eugen Soloviov\thanks{Independent Researcher. ORCID:
+\href{https://orcid.org/0009-0006-3148-111X}{0009-0006-3148-111X}.
+Correspondence: \href{mailto:suenot@gmail.com}{suenot@gmail.com}.
+Code to reproduce every number and figure:
+\url{https://github.com/suenot/plateau-robustness}.}}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Practitioners optimizing trading-strategy hyperparameters are widely advised to
+prefer a \emph{plateau}---a broad region of consistently good performance---over
+a \emph{sharp peak}, on the grounds that peaks are artifacts of in-sample noise.
+This ``parameter-robustness'' heuristic is folklore in the algorithmic-trading
+literature, yet it has never been validated against ground truth or compared to
+formal backtest-overfitting diagnostics. We build a controlled simulation in
+which the population Sharpe surface over the hyperparameter grid is known, draw
+independent in-sample and out-of-sample (OOS) returns with realistic
+cross-strategy correlation, and evaluate three things on the same data: (i) local
+plateau-geometry metrics (relative plateau width, sensitivity, a combined
+robustness score), (ii) the Probability of Backtest Overfitting (PBO) via
+combinatorially-symmetric cross-validation, and (iii) the Deflated Sharpe Ratio
+(DSR). Across $9{,}000$ simulated optimization problems we find that, as
+\emph{standalone diagnostics}, the geometry metrics are weak and dominated by the
+DSR, and the popular fixed thresholds (e.g.\ ``robustness score $>0.1$'') are not
+calibrated. However, geometry carries \emph{complementary} information: it
+detects the sharp-peak failure mode that statistical diagnostics miss, while
+being blind to the no-edge mode they catch, so a combined classifier beats any
+single diagnostic. Moreover, as a \emph{selection principle} the heuristic works:
+choosing the broad-surrogate optimum instead of the naive argmax raises OOS
+Sharpe by $0.09$ on average in one dimension and $0.24$ in two, concentrated
+entirely in landscapes whose naive optimum is a sharp peak. We conclude that
+``prefer plateaus'' is sound as a selection bias---increasingly so as the number
+of parameters grows---but unreliable as a standalone overfitting test, and should
+be used alongside, not instead of, statistical multiplicity controls.
+\end{abstract}
+
+\section{Introduction}
+
+Optimizing the free parameters of a trading strategy on historical data is an
+invitation to overfit. With enough configurations tried, some will look
+excellent in sample purely by chance and collapse out of sample
+\citep{bailey2017pbo,harvey2016crosssection,lopezdeprado2018}. The standard
+statistical responses correct the \emph{selected} performance for the number of
+trials and for non-normality---the Deflated Sharpe Ratio (DSR)
+\citep{bailey2014dsr}, the Probability of Backtest Overfitting (PBO)
+\citep{bailey2017pbo}, and data-snooping reality checks
+\citep{white2000reality,harvey2015backtesting}.
+
+A second, more geometric piece of advice circulates widely in practitioner
+writing \citep{pardo2008,lopezdeprado2018,arnott2019protocol}: do not just take
+the best parameter set, look at the \emph{shape} of the objective around it. A
+broad ``plateau'' of similar performance is presumed robust; a narrow ``peak''
+that collapses one grid step away is presumed to be fitted noise. The intuition
+mirrors the flat-minima literature in machine learning, where wide minima are
+argued to generalize better than sharp ones
+\citep{hochreiter1997flat,keskar2017sharp}. Modern hyperparameter tooling makes
+the geometry easy to inspect---slice plots, contour heatmaps, and functional
+ANOVA importances \citep{hutter2014fanova,akiba2019optuna}---and several authors
+propose scalar ``plateau metrics'' (sensitivity ratios, plateau widths,
+robustness scores) to formalize it.
+
+Despite its popularity, the plateau heuristic has, to our knowledge, never been
+tested where the truth is known. Does plateau geometry actually predict
+out-of-sample degradation? Are the proposed scalar metrics and their thresholds
+meaningful? How do they compare to, and combine with, the statistical diagnostics
+designed for the same problem? We answer these questions in a controlled
+simulation and report results that are useful precisely because they are mixed.
+
+\paragraph{Contributions.}
+\begin{enumerate}\itemsep2pt
+\item A reproducible simulation framework in which the population Sharpe surface
+over a hyperparameter grid is known, so selection quality, in-sample inflation,
+and out-of-sample performance are all measurable ground truth
+(Section~\ref{sec:framework}).
+\item A head-to-head evaluation of three local plateau metrics against PBO and
+DSR as overfitting \emph{classifiers}. The geometry metrics are weak alone (ROC
+AUC near $0.55$) and dominated by the DSR (AUC up to $0.79$); the article-style
+fixed thresholds do not correspond to calibrated decision boundaries
+(Section~\ref{sec:diagnostic}).
+\item Evidence that plateau geometry and statistical diagnostics detect
+\emph{different} overfitting modes---sharp-peak fragility vs.\ no-edge
+selection---so that combining them strictly improves classification, and that the
+geometry signal \emph{strengthens with dimensionality}
+(Sections~\ref{sec:complementarity}--\ref{sec:dimension}).
+\item A demonstration that, as a \emph{selection rule}, preferring the broad
+optimum delivers a real and free out-of-sample gain, targeted exactly at
+sharp-peak landscapes (Section~\ref{sec:selection}).
+\end{enumerate}
+
+\section{Background and metrics}
+\label{sec:background}
+
+\paragraph{Setting.} A strategy is evaluated at configurations $\theyll$ on a
+grid $\Theta \subset [0,1]^d$. Each configuration produces a return series; over a
+sample of $T$ periods its annualized Sharpe ratio is estimated as
+$\widehat{\sr}(\theyll) = \bar r(\theyll)/s(\theyll)\sqrt{P}$ with $P=252$. The
+optimizer reports $\hat\theyll = \arg\max_{\theyll} \widehat{\sr}_{\text{IS}}(\theyll)$;
+the quantity that matters is the realized out-of-sample $\sr_{\text{OOS}}(\hat\theyll)$.
+
+\paragraph{Plateau metrics.} We study three local-geometry metrics in the
+practitioner tradition, computed from the in-sample Sharpe landscape, fixing two
+estimator flaws we observed in circulating implementations. First, per-parameter
+quantities are taken along the axis through the optimum with the other
+parameters \emph{held fixed} (exact on a grid), rather than by regressing over
+top trials in which all parameters co-vary. Second, the plateau width is the
+\emph{connected} super-level set around the optimum, not $\max-\min$ over all
+``good'' points, which a single distant lucky point inflates.
+
+For axis $i$, with optimum value $\sr^\star$ and margin $\delta$ (in Sharpe
+units), the \emph{relative plateau width} is
+\begin{equation}
+W_i \;=\; \frac{\big|\{\,\text{contiguous run through }\hat\theyll : \widehat{\sr}(\theyll)\ge \sr^\star-\delta\,\}\big|}{\text{axis length}} \in [0,1].
+\end{equation}
+The \emph{sensitivity} is the Sharpe drop when stepping a fixed fraction of the
+axis away from the optimum (well defined for any sign of $\sr^\star$, unlike the
+elasticity used in some sources, whose first-derivative term vanishes at an
+interior maximum). The \emph{robustness score} aggregates widths with
+first-order functional-ANOVA weights $w_i$ \citep{hutter2014fanova}:
+\begin{equation}
+R \;=\; \prod_{i=1}^{d} W_i^{\,w_i}, \qquad \textstyle\sum_i w_i = 1 .
+\label{eq:R}
+\end{equation}
+A high $R$ is meant to signal robustness; a common rule of thumb labels $R>0.1$
+``robust'' and $R<0.01$ ``overfit.''
+
+\paragraph{Statistical baselines.} We compare against two standard diagnostics
+computed on the same returns. The \emph{Probability of Backtest Overfitting}
+\citep{bailey2017pbo} uses combinatorially-symmetric cross-validation (CSCV):
+the $T$ observations are split into $S$ blocks; over all $\binom{S}{S/2}$
+train/test partitions one records the relative out-of-sample rank of the
+in-sample-best strategy, and PBO is the fraction of partitions in which that rank
+falls below the median. The \emph{Deflated Sharpe Ratio} \citep{bailey2014dsr}
+is the probabilistic Sharpe ratio of the selected strategy evaluated against the
+expected maximum Sharpe of $N$ independent null trials,
+\begin{equation}
+\sr_0 \;=\; \sqrt{V}\Big[(1-\gamma)\,\Phi^{-1}\!\big(1-\tfrac1N\big) + \gamma\,\Phi^{-1}\!\big(1-\tfrac1{Ne}\big)\Big],
+\end{equation}
+where $V$ is the cross-trial variance of the Sharpe estimates and $\gamma$ is the
+Euler--Mascheroni constant; a low DSR flags a selection that is not significant
+once the number of trials and non-normality are accounted for.
+
+\section{Simulation framework}
+\label{sec:framework}
+
+We treat backtest optimization as selecting from a grid of noisy estimates of a
+known surface. The \emph{population} annualized-Sharpe surface
+$\sr_{\text{true}}(\theyll)$ is a sum of a broad Gaussian bump (the plateau) and
+an optional narrow Gaussian bump (the spike), on a floor $\sr_0$:
+\begin{equation}
+\sr_{\text{true}}(\theyll) = \sr_0 + A_p \exp\!\Big(\!-\tfrac{\|\theyll-c_p\|^2}{2\ell_p^2}\Big)
++ A_s \exp\!\Big(\!-\tfrac{\|\theyll-c_s\|^2}{2\ell_s^2}\Big).
+\end{equation}
+Each configuration emits per-period returns
+$r_t(\theyll) = \sr_{\text{true}}(\theyll)/\sqrt{P} + \sqrt{c}\,F_t + \sqrt{1-c}\,\varepsilon_t(\theyll)$,
+with a shared market factor $F_t$ and idiosyncratic $\varepsilon$, both standard
+normal; the factor share $c$ equals the cross-strategy correlation and is the
+structure PBO and DSR are designed for. We draw independent in-sample
+($T_{\text{IS}}\in\{120,252,504\}$) and out-of-sample ($T_{\text{OOS}}=504$)
+blocks.
+
+\paragraph{Surrogate.} At $T_{\text{IS}}=252$ the per-configuration Sharpe
+estimate has noise of order $1.0$ annualized, so the \emph{raw} per-cell surface
+is dominated by noise and any argmax looks like a needle. Practitioners never
+read raw per-point values; they assess the landscape through a surrogate---the
+smoothing implicit in contour plots and functional ANOVA. We model that surrogate
+with a Gaussian kernel of fixed, disclosed bandwidth and compute all plateau
+geometry on it (Figure~\ref{fig:setup}). The statistical baselines act on the raw
+returns, as their definitions require.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{fig_setup.pdf}
+\caption{The four canonical landscapes (one hyperparameter). Solid: population
+Sharpe. Dots: a single noisy in-sample estimate per grid cell. Dashed: the
+kernel surrogate on which plateau geometry is measured. Dotted vertical: the
+naive argmax of the raw estimate. The \emph{null} panel has no real edge, yet its
+smoothed surrogate still presents a benign-looking plateau---the failure mode
+geometry cannot see.}
+\label{fig:setup}
+\end{figure}
+
+\paragraph{Selection rules and outcomes.} The \emph{naive} rule selects the raw
+argmax; the \emph{plateau-aware} rule selects the surrogate argmax, which prefers
+a broad maximum over a lucky isolated spike. Because the truth is known we record,
+for each experiment, the oracle configuration $\arg\max \sr_{\text{true}}$, the
+\emph{true regret} $\sr_{\text{true}}(\text{oracle})-\sr_{\text{true}}(\hat\theyll)$,
+the in-sample$\to$out-of-sample inflation gap, and the realized OOS Sharpe of
+each rule, alongside every diagnostic.
+
+\section{Experimental setup}
+\label{sec:setup}
+
+Each experiment samples a random landscape from one of four families---wide
+\emph{plateau}, sharp \emph{needle}, \emph{mixed} (plateau plus a taller spike),
+and \emph{null} (no edge)---with randomized amplitudes, widths, centers, factor
+share and in-sample length, on a grid of $41^d$ configurations. We run
+$N{=}5{,}000$ one-parameter and $N{=}4{,}000$ two-parameter problems. PBO uses
+$S{=}10$ blocks; the surrogate bandwidth is $0.06$ of the axis and the plateau
+margin is $\delta{=}0.25$ Sharpe, both fixed in advance.
+
+We score each diagnostic against three ground-truth binary labels capturing
+distinct overfitting modes: \textbf{no-edge}, the selected configuration has true
+Sharpe below $0.25$ (deployed something essentially worthless); \textbf{fragile},
+true regret exceeds $0.5$ (left real edge on the table by landing on a fragile or
+wrong point); and \textbf{OOS-loss}, the selected configuration loses money out of
+sample. Discriminative power is the ROC AUC of the (orientation-aligned)
+diagnostic; complementarity is the cross-validated AUC of an $L_2$ logistic
+combination. All code, seeds and the exact configuration are released.
+
+\section{Results}
+
+\subsection{As standalone diagnostics, geometry is weak and the DSR dominates}
+\label{sec:diagnostic}
+
+Figure~\ref{fig:auc} and Table~\ref{tab:auc} report detection AUCs in one
+dimension. The Deflated Sharpe Ratio is the strongest single diagnostic by a wide
+margin (AUC $0.785$ for no-edge, $0.713$ for OOS-loss); PBO is intermediate. The
+plateau-geometry metrics barely beat chance ($R$: $0.556/0.514/0.534$). Curvature
+is even \emph{anti}-predictive of the no-edge mode (AUC $0.36$): a sharp surrogate
+peak indicates that \emph{some} real signal exists, which is the opposite of the
+no-edge case. The article-style fixed thresholds inherit this weakness---at
+$R>0.1$ the implied ``robust'' set has essentially the same overfit base rate as
+the whole sample, so the threshold is not a calibrated decision boundary.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\textwidth]{fig_auc.pdf}
+\caption{Detection AUC (one parameter, $N{=}5{,}000$). Rows above the line are
+plateau-geometry metrics; below are statistical baselines. Blue $>0.5$ is
+informative for that overfitting mode; red $<0.5$ is anti-informative. Geometry
+and statistics light up different columns.}
+\label{fig:auc}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Detection AUC by diagnostic and overfitting mode. Higher is better;
+$0.5$ is chance. Best in each column in \textbf{bold}.}
+\label{tab:auc}
+\small
+\begin{tabular}{lccc@{\hskip 2em}ccc}
+\toprule
+& \multicolumn{3}{c}{One parameter ($d{=}1$)} & \multicolumn{3}{c}{Two parameters ($d{=}2$)}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Diagnostic & no-edge & fragile & OOS-loss & no-edge & fragile & OOS-loss \\
+\midrule
+Robustness score $R$ & 0.556 & 0.514 & 0.534 & 0.736 & 0.556 & 0.635 \\
+Plateau width        & 0.556 & 0.514 & 0.534 & 0.726 & 0.553 & 0.626 \\
+Curvature            & 0.358 & 0.523 & 0.371 & 0.430 & 0.539 & 0.449 \\
+\midrule
+PBO                  & 0.669 & 0.535 & 0.643 & 0.727 & \textbf{0.585} & \textbf{0.670} \\
+DSR                  & \textbf{0.785} & \textbf{0.570} & \textbf{0.713} & 0.735 & 0.573 & 0.656 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{But geometry and statistics are complementary}
+\label{sec:complementarity}
+
+The two families specialize. Statistical diagnostics excel at the \emph{no-edge}
+mode---selecting from pure noise---which is what they were built for. Plateau
+geometry, by construction, sees the \emph{shape} of the optimum and contributes on
+the \emph{fragile} mode, but is blind to no-edge: a flat null surface smooths into
+a wide, benign-looking plateau (Figure~\ref{fig:setup}, right). The risk-oriented
+diagnostics are only weakly correlated across families. Consequently a logistic
+combination of geometry and statistics strictly improves over either alone
+(Figure~\ref{fig:comp}): for the no-edge mode the combined AUC is $0.802$ versus
+$0.784$ for the DSR; combining helps on every label.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\textwidth]{fig_complementarity.pdf}
+\caption{Cross-validated AUC of single diagnostics versus a logistic combination
+of plateau and statistical features (one parameter). Combining always helps,
+consistent with the two families detecting different overfitting modes.}
+\label{fig:comp}
+\end{figure}
+
+\subsection{The geometry signal grows with dimensionality}
+\label{sec:dimension}
+
+The right half of Table~\ref{tab:auc} repeats the analysis with two
+hyperparameters. Overfitting is worse---base rates of every failure mode rise---and
+the plateau metrics become substantially more useful: $R$'s no-edge AUC climbs
+from $0.556$ to $0.736$, now \emph{matching} the DSR ($0.735$), and the combined
+classifier reaches $0.825$. This is the regime where the heuristic is most often
+invoked in practice (many interacting parameters), and it is where geometry earns
+its keep.
+
+\subsection{As a selection rule, ``prefer plateaus'' works}
+\label{sec:selection}
+
+The practical question is not only whether geometry diagnoses overfitting but
+whether \emph{acting} on it helps. Table~\ref{tab:selection} and
+Figure~\ref{fig:selection} compare the naive and plateau-aware selection rules out
+of sample. Preferring the broad-surrogate optimum raises mean OOS Sharpe from
+$1.12$ to $1.21$ in one dimension ($+0.085$; Wilcoxon $p\!\approx\!3\times10^{-12}$)
+and from $0.86$ to $1.11$ in two ($+0.243$; $p\!\approx\!3\times10^{-46}$). The
+benefit is sharply conditional: it is large where the naive optimum is a steep
+peak (top curvature tercile: $+0.18$ in $d{=}1$, $+0.50$ in $d{=}2$) and
+negligible or slightly negative where the landscape is already smooth. In other
+words, plateau-aware selection is targeted insurance against the sharp-peak
+failure mode---free when unnecessary, valuable when it matters---and the premium
+it pays back rises with the number of parameters. The benefit requires a moderate
+surrogate bandwidth; over-smoothing eventually discards real signal and turns the
+average gain negative (Figure~\ref{fig:selection}, right).
+
+\begin{table}[t]
+\centering
+\caption{Out-of-sample Sharpe of naive vs.\ plateau-aware selection.}
+\label{tab:selection}
+\small
+\begin{tabular}{lcc}
+\toprule
+ & One parameter & Two parameters \\
+\midrule
+Naive argmax (mean OOS Sharpe)        & 1.123 & 0.862 \\
+Plateau-aware (mean OOS Sharpe)       & 1.209 & 1.106 \\
+Mean gain                             & $+0.085$ & $+0.243$ \\
+\quad high-curvature tercile          & $+0.176$ & $+0.503$ \\
+\quad low-curvature tercile           & $-0.035$ & $+0.016$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{fig_selection.pdf}
+\caption{Out-of-sample gain of plateau-aware over naive selection (one
+parameter). Left: gain by curvature tercile of the naive optimum---the benefit is
+concentrated where that optimum is a sharp peak. Right: the gain versus surrogate
+bandwidth; a moderate bandwidth is best, and over-smoothing eventually hurts.}
+\label{fig:selection}
+\end{figure}
+
+\section{Discussion}
+
+The results reconcile two views that are usually stated as competitors. The
+statistical school treats overfitting as a multiple-testing problem and corrects
+the \emph{number} of trials; the geometric school treats it as a fragility
+problem and inspects the \emph{shape} of the optimum. Our experiments show these
+are not substitutes but complements, because they detect different failure modes.
+A selection can be overfit by being lucky among many worthless candidates
+(no-edge), which the DSR and PBO catch and geometry cannot; or by latching onto a
+narrow noise-inflated peak when a broad region was nearly as good (fragile), which
+geometry catches and the count-based corrections largely miss. The honest summary
+of the popular plateau heuristic is therefore split: its specific scalar metrics
+and rule-of-thumb thresholds are poorly calibrated and should not be trusted as a
+standalone test, but its underlying \emph{action}---prefer the broad optimum---is
+a sound, essentially free selection bias whose value grows with the number of
+parameters.
+
+\section{Limitations}
+
+Our generative model uses Gaussian, serially independent returns with a single
+shared factor; real returns have fat tails, volatility clustering, regime shifts,
+and richer dependence that all amplify overfitting and may change the relative
+ranking of diagnostics. We model the optimizer as exhaustive grid evaluation plus
+a fixed-bandwidth smoothing surrogate; an adaptive sampler (e.g.\ TPE or Gaussian
+processes) explores unevenly and would interact with the geometry metrics
+differently. The labels and thresholds, while ground-truth-based, involve choices
+($\delta$, the surrogate bandwidth, the regret cutoff); we fixed them in advance
+and showed the selection result is qualitatively stable across bandwidths, but a
+real deployment would tune them. Finally, we study Sharpe-based selection on a
+single asset; portfolio-level and turnover/cost-aware objectives are left to
+future work.
+
+\section{Conclusion}
+
+We gave the plateau-versus-peak heuristic of trading-strategy optimization its
+first controlled validation against ground truth and against the standard
+backtest-overfitting diagnostics. Local plateau metrics are weak as standalone
+overfitting tests and are dominated by the Deflated Sharpe Ratio, and their
+popular fixed thresholds are not calibrated. But geometry is genuinely
+complementary to statistical multiplicity corrections, and acting on it---selecting
+the broad optimum rather than the naive argmax---delivers a real, targeted
+out-of-sample improvement that grows with dimensionality. Prefer plateaus as a
+selection bias; do not rely on them as a test; and pair them with the DSR or PBO,
+which see the failure mode geometry cannot.
+
+\paragraph{Reproducibility.} All experiments are deterministic given the
+released seeds. A single command (\texttt{python scripts/run\_all.py}) regenerates
+every number, table, and figure; the implementation of the metrics, the PBO/CSCV
+and DSR baselines, and the simulation is provided as an open-source package.
+
+\small
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}
