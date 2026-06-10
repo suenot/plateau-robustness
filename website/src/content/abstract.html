@@ -1,0 +1,36 @@
+<p>Practitioners optimizing trading-strategy hyperparameters are widely
+advised to prefer a <em>plateau</em>—a broad region of consistently good
+performance—over a <em>sharp peak</em>, on the grounds that peaks are
+artifacts of in-sample noise. This “parameter-robustness” heuristic is
+folklore in the algorithmic-trading literature, yet it has never been
+validated against ground truth or compared to formal
+backtest-overfitting diagnostics. We build a controlled simulation in
+which the population Sharpe surface over the hyperparameter grid is
+known, draw independent in-sample and out-of-sample (OOS) returns with
+realistic cross-strategy correlation, and evaluate on the same data: (i)
+local plateau-geometry metrics (relative plateau width, sensitivity, a
+combined robustness score, and a top-versus-typical “outlier gap”),
+measured on a kernel-smoothed surrogate of the in-sample landscape; (ii)
+the Probability of Backtest Overfitting (PBO); and (iii) the
+Probabilistic and Deflated Sharpe Ratios (PSR, DSR). Across <span
+class="math inline">9{,}000</span> simulated optimization problems the
+plateau-<em>shape</em> metrics are weak standalone diagnostics, and the
+popular fixed thresholds (e.g. “robustness score <span
+class="math inline">&gt;0.1</span>”) are not calibrated. The strongest
+single diagnostic is the plain PSR against zero skill—the significance
+test, not the multiplicity deflation, carries the signal in this
+setting. Geometry still adds information where it has any: combining
+shape metrics with the statistical diagnostics significantly improves
+detection of the sharp-peak (<em>fragile</em>) mode and of every mode in
+two dimensions, but is statistically indistinguishable from the plain
+PSR for no-edge detection in one dimension. As a <em>selection
+principle</em>, however, the heuristic works outright: choosing the
+optimum of the smoothed surrogate instead of the raw argmax raises OOS
+Sharpe by <span class="math inline">0.12</span> on average in one
+dimension and <span class="math inline">0.31</span> in two, with a gain
+that is positive in every curvature tercile and increases monotonically
+with the curvature of the surrogate landscape at its optimum. We
+conclude that “prefer plateaus” is sound as a selection
+bias—increasingly so as the number of parameters grows—but unreliable as
+a standalone overfitting test, and should be used alongside, not instead
+of, statistical significance controls.</p>

@@ -1,0 +1,888 @@
+<h1 id="introduction">Introduction</h1>
+<p>Optimizing the free parameters of a trading strategy on historical
+data is an invitation to overfit. With enough configurations tried, some
+will look excellent in sample purely by chance and collapse out of
+sample <span class="citation"
+data-cites="bailey2017pbo harvey2016crosssection lopezdeprado2018">(Bailey
+et al. 2017; Harvey et al. 2016; López de Prado 2018)</span>. The
+standard statistical responses correct the <em>selected</em> performance
+for the number of trials and for non-normality—the Deflated Sharpe Ratio
+(DSR) <span class="citation" data-cites="bailey2014dsr">(Bailey and
+López de Prado 2014)</span>, the Probability of Backtest Overfitting
+(PBO) <span class="citation" data-cites="bailey2017pbo">(Bailey et al.
+2017)</span>, and data-snooping reality checks <span class="citation"
+data-cites="white2000reality harvey2015backtesting">(White 2000; Harvey
+and Liu 2015)</span>.</p>
+<p>A second, more geometric piece of advice circulates widely in
+practitioner writing <span class="citation"
+data-cites="pardo2008 lopezdeprado2018 arnott2019protocol">(Pardo 2008;
+López de Prado 2018; Arnott et al. 2019)</span>: do not just take the
+best parameter set, look at the <em>shape</em> of the objective around
+it. A broad “plateau” of similar performance is presumed robust; a
+narrow “peak” that collapses one grid step away is presumed to be fitted
+noise. The intuition mirrors the flat-minima literature in machine
+learning, where wide minima are argued to generalize better than sharp
+ones <span class="citation"
+data-cites="hochreiter1997flat keskar2017sharp">(Hochreiter and
+Schmidhuber 1997; Keskar et al. 2017)</span>. Modern hyperparameter
+tooling makes the geometry easy to inspect—slice plots, contour
+heatmaps, and functional ANOVA importances <span class="citation"
+data-cites="hutter2014fanova akiba2019optuna">(Hutter et al. 2014; Akiba
+et al. 2019)</span>—and several authors propose scalar “plateau metrics”
+(sensitivity ratios, plateau widths, robustness scores) to formalize
+it.<a href="#fn1" class="footnote-ref" id="fnref1"
+role="doc-noteref"><sup>1</sup></a></p>
+<p>Despite its popularity, the plateau heuristic has, to our knowledge,
+never been tested where the truth is known. Does plateau geometry
+actually predict out-of-sample degradation? Are the proposed scalar
+metrics and their thresholds meaningful? How do they compare to, and
+combine with, the statistical diagnostics designed for the same problem?
+We answer these questions in a controlled simulation and report results
+that are useful precisely because they are mixed.</p>
+<h4 id="contributions.">Contributions.</h4>
+<ol>
+<li><p>A reproducible simulation framework in which the population
+Sharpe surface over a hyperparameter grid is known, so selection
+quality, in-sample inflation, and out-of-sample performance are all
+measurable ground truth (Section <a href="#sec:framework"
+data-reference-type="ref"
+data-reference="sec:framework">3</a>).</p></li>
+<li><p>A head-to-head evaluation of the plateau metrics against PBO,
+DSR, and the plain probabilistic Sharpe ratio (PSR) as overfitting
+<em>classifiers</em>, with bootstrap confidence intervals. The shape
+metrics are weak alone (no-edge ROC AUC <span
+class="math inline">0.501</span> in one dimension, i.e. chance); the
+strongest single diagnostic is the PSR against zero skill (AUC <span
+class="math inline">0.808</span>), ahead of the DSR (<span
+class="math inline">0.785</span>) and PBO (<span
+class="math inline">0.669</span>), and the article-style fixed
+thresholds do not correspond to calibrated decision boundaries
+(Section <a href="#sec:diagnostic" data-reference-type="ref"
+data-reference="sec:diagnostic">5.1</a>).</p></li>
+<li><p>Evidence that geometry and statistics detect <em>different</em>
+overfitting modes, so that a combined classifier significantly improves
+detection of the sharp-peak <em>fragile</em> mode—and of every mode in
+two dimensions—while adding nothing significant over the plain PSR for
+no-edge detection in one dimension (Sections <a
+href="#sec:complementarity" data-reference-type="ref"
+data-reference="sec:complementarity">5.2</a>–<a href="#sec:dimension"
+data-reference-type="ref" data-reference="sec:dimension">5.3</a>). We
+also show the geometry must be <em>anchored at the surrogate
+optimum</em>: measured at the naive argmax instead, the same metrics
+become anti-informative (Section <a href="#sec:anchoring"
+data-reference-type="ref"
+data-reference="sec:anchoring">5.4</a>).</p></li>
+<li><p>A demonstration that, as a <em>selection rule</em>, preferring
+the broad optimum of a denoised landscape delivers a real out-of-sample
+gain that is positive in every curvature tercile, grows with the
+sharpness of the surrogate optimum and with dimensionality, and depends
+on the surrogate bandwidth in a disclosed way (Section <a
+href="#sec:selection" data-reference-type="ref"
+data-reference="sec:selection">5.5</a>).</p></li>
+</ol>
+<h1 id="sec:background">Background and metrics</h1>
+<h4 id="setting.">Setting.</h4>
+<p>A strategy is evaluated at configurations <span
+class="math inline">\theta</span> on a grid <span
+class="math inline">\Theta \subset [0,1]^d</span>. Each configuration
+produces a return series; over a sample of <span
+class="math inline">T</span> periods its annualized Sharpe ratio is
+estimated as <span class="math inline">\widehat{\mathrm{SR}}(\theta) =
+\bar r(\theta)/s(\theta)\sqrt{P}</span> with <span
+class="math inline">P=252</span>. The optimizer reports <span
+class="math inline">\hat\theta= \arg\max_{\theta}
+\widehat{\mathrm{SR}}_{\text{IS}}(\theta)</span>; the quantity that
+matters is the realized out-of-sample <span
+class="math inline">\mathrm{SR}_{\text{OOS}}(\hat\theta)</span>.</p>
+<h4 id="plateau-metrics.">Plateau metrics.</h4>
+<p>We study the local-geometry metrics of the practitioner tradition,
+computed from the in-sample Sharpe landscape, fixing estimator flaws we
+observed in circulating implementations. First, per-parameter quantities
+are taken along the axis through the optimum with the other parameters
+<em>held fixed</em> (exact on a grid), rather than by regressing over
+top trials in which all parameters co-vary. Second, the plateau width is
+the <em>connected</em> super-level set around the optimum, not <span
+class="math inline">\max-\min</span> over all “good” points, which a
+single distant lucky point inflates.</p>
+<p>For axis <span class="math inline">i</span>, with optimum value <span
+class="math inline">\mathrm{SR}^\star</span> and margin <span
+class="math inline">\delta</span> (in Sharpe units), the <em>relative
+plateau width</em> is <span class="math display">\begin{equation}
+W_i \;=\; \frac{\big|\{\,\text{contiguous run through }\hat\theta:
+\widehat{\mathrm{SR}}(\theta)\ge
+\mathrm{SR}^\star-\delta\,\}\big|}{\text{axis length}} \in [0,1].
+\end{equation}</span> The <em>sensitivity</em> is the Sharpe drop when
+stepping a fixed fraction of the axis away from the optimum (well
+defined for any sign of <span
+class="math inline">\mathrm{SR}^\star</span>, unlike the elasticity used
+in some sources, whose first-derivative term vanishes at an interior
+maximum). The <em>robustness score</em> aggregates widths with
+first-order functional-ANOVA weights <span
+class="math inline">w_i</span> <span class="citation"
+data-cites="hutter2014fanova">(Hutter et al. 2014)</span>: <span
+class="math display">\begin{equation}
+R \;=\; \prod_{i=1}^{d} W_i^{\,w_i}, \qquad \textstyle\sum_i w_i = 1 .
+\label{eq:R}
+\end{equation}</span> A high <span class="math inline">R</span> is meant
+to signal robustness; a common rule of thumb labels <span
+class="math inline">R&gt;0.1</span> “robust” and <span
+class="math inline">R&lt;0.01</span> “overfit.” Note that in <span
+class="math inline">d{=}1</span> there is a single axis with unit
+weight, so <span class="math inline">R \equiv W_1</span>: the robustness
+score and the plateau width coincide by construction. Finally, the
+<em>outlier gap</em> asks whether the best few cells are outliers
+relative to typical performance: <span class="math inline">G =
+\mathrm{mean}\big(\text{top-3 } \widehat{\mathrm{SR}}\big) -
+\mathrm{median}\big(\widehat{\mathrm{SR}}\big)</span>. The practitioner
+version is the <em>ratio</em> of top-3 to median, which is ill-posed
+whenever the median Sharpe is near zero or negative—exactly the no-edge
+landscapes that matter most; the difference form preserves the intent
+and is well defined everywhere.</p>
+<h4 id="statistical-baselines.">Statistical baselines.</h4>
+<p>We compare against three standard diagnostics computed on the same
+returns. The <em>Probability of Backtest Overfitting</em> <span
+class="citation" data-cites="bailey2017pbo">(Bailey et al. 2017)</span>
+uses combinatorially-symmetric cross-validation (CSCV): the <span
+class="math inline">T</span> observations are split into <span
+class="math inline">S</span> blocks; over all <span
+class="math inline">\binom{S}{S/2}</span> train/test partitions one
+records the relative out-of-sample rank of the in-sample-best strategy,
+and PBO is the fraction of partitions in which that rank falls below the
+median. The <em>probabilistic Sharpe ratio</em> <span class="citation"
+data-cites="bailey2012psr">(Bailey and López de Prado 2012)</span> <span
+class="math inline">\mathrm{PSR}(\mathrm{SR}^{*})</span> is the
+probability that the true Sharpe exceeds a benchmark <span
+class="math inline">\mathrm{SR}^{*}</span>, given the sample length,
+skewness, and kurtosis of the selected strategy’s returns; <span
+class="math inline">\mathrm{PSR}(0)</span> tests significance against
+zero skill with <em>no</em> multiplicity correction. The <em>Deflated
+Sharpe Ratio</em> <span class="citation"
+data-cites="bailey2014dsr">(Bailey and López de Prado 2014)</span> is
+<span class="math inline">\mathrm{PSR}(\mathrm{SR}_0)</span> with the
+benchmark set to the expected maximum Sharpe of <span
+class="math inline">N</span> independent null trials, <span
+class="math display">\begin{equation}
+\mathrm{SR}_0 \;=\;
+\sqrt{V}\Big[(1-\gamma)\,\Phi^{-1}\!\big(1-\tfrac1N\big) +
+\gamma\,\Phi^{-1}\!\big(1-\tfrac1{Ne}\big)\Big],
+\end{equation}</span> where <span class="math inline">V</span> is the
+cross-trial variance of the Sharpe estimates and <span
+class="math inline">\gamma</span> is the Euler–Mascheroni constant; a
+low DSR flags a selection that is not significant once the number of
+trials and non-normality are accounted for. We set <span
+class="math inline">N</span> to the full grid size (<span
+class="math inline">41</span> in <span class="math inline">d{=}1</span>,
+<span class="math inline">1681</span> in <span
+class="math inline">d{=}2</span>). This follows common practice but
+overstates the effective number of trials: grid trials are strongly
+correlated (a shared market factor plus a smooth true surface), and
+<span class="citation" data-cites="bailey2014dsr">Bailey and López de
+Prado (2014)</span> prescribe the number of <em>effectively
+independent</em> trials. We disclose this choice and report a
+sensitivity check in Section <a href="#sec:diagnostic"
+data-reference-type="ref" data-reference="sec:diagnostic">5.1</a>.</p>
+<h1 id="sec:framework">Simulation framework</h1>
+<p>We treat backtest optimization as selecting from a grid of noisy
+estimates of a known surface. The <em>population</em> annualized-Sharpe
+surface <span
+class="math inline">\mathrm{SR}_{\text{true}}(\theta)</span> is a sum of
+a broad Gaussian bump (the plateau) and an optional narrow Gaussian bump
+(the spike), on a floor <span class="math inline">\mu_0</span>: <span
+class="math display">\begin{equation}
+\mathrm{SR}_{\text{true}}(\theta) = \mu_0 + A_p
+\exp\!\Big(\!-\tfrac{\|\theta-c_p\|^2}{2\ell_p^2}\Big)
++ A_s \exp\!\Big(\!-\tfrac{\|\theta-c_s\|^2}{2\ell_s^2}\Big).
+\end{equation}</span> Each configuration emits per-period returns <span
+class="math inline">r_t(\theta) =
+\mathrm{SR}_{\text{true}}(\theta)/\sqrt{P} + \sqrt{c}\,F_t +
+\sqrt{1-c}\,\varepsilon_t(\theta)</span>, with a shared market factor
+<span class="math inline">F_t</span> and idiosyncratic <span
+class="math inline">\varepsilon</span>, both standard normal; the factor
+share <span class="math inline">c</span> equals the cross-strategy
+correlation and is the structure PBO and DSR are designed for. We draw
+independent in-sample (<span
+class="math inline">T_{\text{IS}}\in\{120,252,504\}</span>) and
+out-of-sample (<span class="math inline">T_{\text{OOS}}=504</span>)
+blocks.</p>
+<h4 id="surrogate.">Surrogate.</h4>
+<p>At <span class="math inline">T_{\text{IS}}=252</span> the
+per-configuration Sharpe estimate has noise of order <span
+class="math inline">1.0</span> annualized, so the <em>raw</em> per-cell
+surface is dominated by noise and any argmax looks like a needle.
+Practitioners never read raw per-point values; they assess the landscape
+through a surrogate—the smoothing implicit in contour plots and
+functional ANOVA. We model that surrogate with a Gaussian kernel of
+disclosed bandwidth and compute all plateau geometry on it (Figure <a
+href="#fig:setup" data-reference-type="ref"
+data-reference="fig:setup">1</a>). The statistical baselines act on the
+raw returns, as their definitions require. Boundary handling matters
+more than one might expect: padding the convolution by replicating edge
+values concentrates roughly half the kernel mass onto a single boundary
+cell, inflating its noise variance; in a flat-null check, <span
+class="math inline">39.9\%</span> of surrogate argmaxes then land in the
+outer three cells per side, versus <span
+class="math inline">14.6\%</span> under uniformity. We therefore use
+mask-normalized smoothing (zero-padded convolution divided by the
+convolution of a ones mask), which removes the weighting artifact; the
+residual edge share (<span class="math inline">29.7\%</span> in the same
+check) reflects the genuinely higher estimation variance where fewer
+neighbors are observed, not a weighting bias.</p>
+<figure id="fig:setup" data-latex-placement="t">
+<img src="/figures/fig_setup.svg" />
+<figcaption>The four canonical landscapes (one hyperparameter). Solid:
+population Sharpe. Dots: a single noisy in-sample estimate per grid
+cell. Dashed: the kernel surrogate on which plateau geometry is
+measured. Dotted vertical: the naive argmax of the raw estimate. The
+<em>null</em> panel has no real edge, yet its smoothed surrogate still
+presents a benign-looking plateau—the failure mode shape-based geometry
+cannot see.</figcaption>
+</figure>
+<h4 id="selection-rules-and-outcomes.">Selection rules and
+outcomes.</h4>
+<p>The <em>naive</em> rule selects the raw argmax; the
+<em>plateau-aware</em> rule selects the surrogate argmax, which prefers
+a broad maximum over a lucky isolated spike. Because the truth is known
+we record, for each experiment, the oracle configuration <span
+class="math inline">\arg\max \mathrm{SR}_{\text{true}}</span>, the
+<em>true regret</em> <span
+class="math inline">\mathrm{SR}_{\text{true}}(\text{oracle})-\mathrm{SR}_{\text{true}}(\hat\theta)</span>,
+the in-sample<span class="math inline">\to</span>out-of-sample inflation
+gap, and the realized OOS Sharpe of each rule, alongside every
+diagnostic.</p>
+<h1 id="sec:setup">Experimental setup</h1>
+<p>Each experiment samples a random landscape from one of four
+families—wide <em>plateau</em>, sharp <em>needle</em>, <em>mixed</em>
+(plateau plus a taller spike), and <em>null</em> (no edge)—with
+randomized amplitudes, widths, centers, factor share and in-sample
+length, on a grid of <span class="math inline">41^d</span>
+configurations. We run <span class="math inline">N{=}5{,}000</span>
+one-parameter and <span class="math inline">N{=}4{,}000</span>
+two-parameter problems. PBO uses <span class="math inline">S{=}10</span>
+blocks; the plateau margin is <span
+class="math inline">\delta{=}0.25</span> Sharpe. The surrogate bandwidth
+is <span class="math inline">0.06</span> of the axis, i.e. <span
+class="math inline">\sigma = 2.4</span> grid cells: the a-priori
+rationale is that this sits well below the true plateau scales of the
+generator (<span class="math inline">\ell_p \in [0.15, 0.45]</span>,
+i.e. <span class="math inline">6</span>–<span
+class="math inline">18</span> cells), so the kernel averages away
+cell-level noise without erasing plateau-scale structure. It was not
+tuned to the results, but it is a choice, and Section <a
+href="#sec:selection" data-reference-type="ref"
+data-reference="sec:selection">5.5</a> reports the selection payoff
+across bandwidths <span class="math inline">0.03</span>–<span
+class="math inline">0.16</span> in both dimensions, including where it
+degrades.</p>
+<p>We score each diagnostic against three ground-truth binary labels
+capturing distinct overfitting modes: <strong>no-edge</strong>, the
+selected configuration has true Sharpe below <span
+class="math inline">0.25</span> (deployed something essentially
+worthless); <strong>fragile</strong>, true regret exceeds <span
+class="math inline">0.5</span> (left real edge on the table by landing
+on a fragile or wrong point); and <strong>OOS-loss</strong>, the
+selected configuration loses money out of sample. Labels are defined for
+the <em>naive</em> selection—the behavior the diagnostics are meant to
+audit—while the plateau geometry is anchored at the <em>surrogate</em>
+optimum, the heuristic’s own object; Section <a href="#sec:anchoring"
+data-reference-type="ref" data-reference="sec:anchoring">5.4</a>
+quantifies how much this anchoring choice matters. Discriminative power
+is the ROC AUC of the (orientation-aligned) diagnostic, with <span
+class="math inline">95\%</span> confidence intervals from <span
+class="math inline">1{,}000</span> bootstrap resamples of the experiment
+records; complementarity is the cross-validated AUC of an <span
+class="math inline">L_2</span> logistic combination (scaler and
+classifier fitted inside each fold). To verify the conclusions are not
+artifacts of the label cutoffs we recompute the full AUC table with the
+no-edge threshold in <span class="math inline">\{0.15, 0.25,
+0.35\}</span> and the fragile threshold in <span
+class="math inline">\{0.35, 0.5, 0.65\}</span>: AUCs shift by at most
+<span class="math inline">0.05</span> (<span
+class="math inline">0.07</span> for the single near-chance
+outlier-gap/fragile cell), and the best diagnostic for each label never
+changes. All code, seeds and the exact configuration are released.</p>
+<h1 id="results">Results</h1>
+<h2 id="sec:diagnostic">As standalone diagnostics: significance tests
+dominate, shape metrics do not</h2>
+<p>Figure <a href="#fig:auc" data-reference-type="ref"
+data-reference="fig:auc">2</a> and Table <a href="#tab:auc"
+data-reference-type="ref" data-reference="tab:auc">1</a> report
+detection AUCs. Three findings stand out.</p>
+<p>First, the plateau-<em>shape</em> metrics are weak. In one dimension
+the robustness score is at chance for the no-edge mode (AUC <span
+class="math inline">0.501</span>) and barely above it for fragile (<span
+class="math inline">0.520</span>); curvature is <em>anti</em>-predictive
+of no-edge (<span class="math inline">0.369</span>), because a sharp
+surrogate peak indicates that <em>some</em> real signal exists—the
+opposite of the no-edge case. The article-style fixed thresholds inherit
+this weakness: at <span class="math inline">R&gt;0.1</span> the implied
+“robust” subset (<span class="math inline">52\%</span> of the
+one-dimensional experiments) has an overfit base rate of <span
+class="math inline">38.6\%</span> versus <span
+class="math inline">38.5\%</span> overall, so the threshold separates
+nothing; in two dimensions <span class="math inline">92\%</span> of
+experiments pass it.</p>
+<p>Second, the strongest single diagnostic is the plain PSR against zero
+(no-edge AUC <span class="math inline">0.808</span>, OOS-loss <span
+class="math inline">0.733</span>), ahead of the DSR (<span
+class="math inline">0.785</span>, <span
+class="math inline">0.713</span>) and PBO (<span
+class="math inline">0.669</span>, <span
+class="math inline">0.643</span>). The explanation is unglamorous: the
+no-edge label (“selected configuration has true Sharpe below <span
+class="math inline">0.25</span>”) is close to the PSR’s own null
+hypothesis, so the significance test against zero is nearly tailor-made
+for it—and the DSR’s multiplicity deflation adds nothing to the
+<em>ranking</em>. The deflation benchmark <span
+class="math inline">\mathrm{SR}_0</span> is proportional to the
+cross-sectional dispersion of Sharpe estimates, which in our generator
+is largest exactly when a real edge exists, so deflating partially
+cancels the signal. Consistently, recomputing the DSR as if only <span
+class="math inline">10\%</span> of the grid trials were independent
+(i.e. less deflation, arguably more honest given the correlated trials
+noted in Section <a href="#sec:background" data-reference-type="ref"
+data-reference="sec:background">2</a>) slightly <em>raises</em> its
+no-edge AUC, from <span class="math inline">0.785</span> to <span
+class="math inline">0.802</span> in <span
+class="math inline">d{=}1</span> and from <span
+class="math inline">0.735</span> to <span
+class="math inline">0.743</span> in <span
+class="math inline">d{=}2</span>. None of this says the DSR is wrong—it
+is a calibrated significance test, and AUC measures ranking, not
+calibration—but for ranking overfitting risk in this setting the
+deflation term contributes no discriminative power beyond the underlying
+PSR.</p>
+<p>Third, the one genuinely informative geometry-family diagnostic is
+the <em>outlier gap</em> (no-edge AUC <span
+class="math inline">0.703</span> in <span
+class="math inline">d{=}1</span> and <span
+class="math inline">0.837</span> in <span
+class="math inline">d{=}2</span>—where it is the best diagnostic of any
+kind). Note what it measures: whether the best cells stand far above
+typical performance, i.e. signal <em>amplitude</em> on the smoothed
+landscape, not shape. The practitioner intuition that survives
+validation is “check that the top of the landscape clears the typical
+level,” not “check that the top is wide.”</p>
+<figure id="fig:auc" data-latex-placement="t">
+<img src="/figures/fig_auc.svg" style="width:62.0%" />
+<figcaption>Detection AUC (one parameter, <span
+class="math inline">N{=}5{,}000</span>). Rows above the line are
+plateau-geometry diagnostics; below are statistical baselines. Red marks
+AUC <span class="math inline">&gt;0.5</span> (informative for that
+overfitting mode); blue marks AUC <span
+class="math inline">&lt;0.5</span> (anti-informative). The shape metrics
+hover near chance; the amplitude-style outlier gap and the significance
+tests carry the no-edge and OOS-loss signal.</figcaption>
+</figure>
+<div id="tab:auc">
+<table>
+<caption>Detection AUC by diagnostic and overfitting mode. Higher is
+better; <span class="math inline">0.5</span> is chance and values below
+<span class="math inline">0.5</span> are anti-informative. Best in each
+column in <strong>bold</strong>. <span class="math inline">95\%</span>
+bootstrap confidence-interval half-widths range from <span
+class="math inline">\pm0.014</span> to <span
+class="math inline">\pm0.024</span> across cells. In <span
+class="math inline">d{=}1</span> the robustness score and the plateau
+width coincide by construction (single axis, unit fANOVA weight), so
+their rows are identical there.</caption>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th colspan="3" style="text-align: center;">One parameter (<span
+class="math inline">d{=}1</span>)</th>
+<th colspan="3" style="text-align: center;">Two parameters (<span
+class="math inline">d{=}2</span>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><span>2-4</span>(lr)<span>5-7</span>
+Diagnostic</td>
+<td style="text-align: center;">no-edge</td>
+<td style="text-align: center;">fragile</td>
+<td style="text-align: center;">OOS-loss</td>
+<td style="text-align: center;">no-edge</td>
+<td style="text-align: center;">fragile</td>
+<td style="text-align: center;">OOS-loss</td>
+</tr>
+<tr>
+<td style="text-align: left;">Robustness score <span
+class="math inline">R</span></td>
+<td style="text-align: center;">0.501</td>
+<td style="text-align: center;">0.520</td>
+<td style="text-align: center;">0.483</td>
+<td style="text-align: center;">0.558</td>
+<td style="text-align: center;">0.585</td>
+<td style="text-align: center;">0.519</td>
+</tr>
+<tr>
+<td style="text-align: left;">Plateau width</td>
+<td style="text-align: center;">0.501</td>
+<td style="text-align: center;">0.520</td>
+<td style="text-align: center;">0.483</td>
+<td style="text-align: center;">0.546</td>
+<td style="text-align: center;">0.587</td>
+<td style="text-align: center;">0.510</td>
+</tr>
+<tr>
+<td style="text-align: left;">Curvature</td>
+<td style="text-align: center;">0.369</td>
+<td style="text-align: center;">0.528</td>
+<td style="text-align: center;">0.380</td>
+<td style="text-align: center;">0.431</td>
+<td style="text-align: center;"><strong>0.635</strong></td>
+<td style="text-align: center;">0.449</td>
+</tr>
+<tr>
+<td style="text-align: left;">Outlier gap</td>
+<td style="text-align: center;">0.703</td>
+<td style="text-align: center;">0.481</td>
+<td style="text-align: center;">0.655</td>
+<td style="text-align: center;"><strong>0.837</strong></td>
+<td style="text-align: center;">0.478</td>
+<td style="text-align: center;"><strong>0.719</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;">PBO</td>
+<td style="text-align: center;">0.669</td>
+<td style="text-align: center;">0.535</td>
+<td style="text-align: center;">0.643</td>
+<td style="text-align: center;">0.727</td>
+<td style="text-align: center;">0.585</td>
+<td style="text-align: center;">0.670</td>
+</tr>
+<tr>
+<td style="text-align: left;">DSR</td>
+<td style="text-align: center;">0.785</td>
+<td style="text-align: center;"><strong>0.570</strong></td>
+<td style="text-align: center;">0.713</td>
+<td style="text-align: center;">0.735</td>
+<td style="text-align: center;">0.573</td>
+<td style="text-align: center;">0.656</td>
+</tr>
+<tr>
+<td style="text-align: left;">PSR</td>
+<td style="text-align: center;"><strong>0.808</strong></td>
+<td style="text-align: center;">0.560</td>
+<td style="text-align: center;"><strong>0.733</strong></td>
+<td style="text-align: center;">0.759</td>
+<td style="text-align: center;">0.580</td>
+<td style="text-align: center;">0.669</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="sec:complementarity">Where combining geometry with statistics
+helps—and where it does not</h2>
+<p>The two families specialize. Statistical diagnostics excel at the
+<em>no-edge</em> mode—selecting from pure noise—which is what they were
+built for. Plateau geometry, by construction, sees the <em>shape</em> of
+the optimum and contributes on the <em>fragile</em> mode, but is blind
+to no-edge: a flat null surface smooths into a wide, benign-looking
+plateau (Figure <a href="#fig:setup" data-reference-type="ref"
+data-reference="fig:setup">1</a>, rightmost panel). The risk-oriented
+diagnostics are only weakly correlated across families (Spearman <span
+class="math inline">|\rho|\le 0.28</span> between <span
+class="math inline">R</span> and PBO/DSR/PSR in <span
+class="math inline">d{=}1</span>), so there is information to
+combine—but the bootstrap confidence intervals show the gain is
+conditional, not universal (Figure <a href="#fig:comp"
+data-reference-type="ref" data-reference="fig:comp">3</a>).</p>
+<p>In one dimension, the logistic combination of geometry and statistics
+(<span class="math inline">R</span>, curvature, PBO, DSR) significantly
+improves on the DSR for no-edge (<span
+class="math inline">\Delta\mathrm{AUC} = +0.017</span>, <span
+class="math inline">95\%</span> CI <span class="math inline">[+0.008,
++0.026]</span>) and OOS-loss (<span class="math inline">+0.022</span>,
+<span class="math inline">[+0.011, +0.034]</span>), but <em>not</em> for
+fragile (<span class="math inline">+0.001</span>, <span
+class="math inline">[-0.010, +0.012]</span>). Against the plain PSR the
+combination adds nothing significant on no-edge (<span
+class="math inline">-0.000</span>, <span class="math inline">[-0.010,
++0.009]</span>; both reach AUC <span class="math inline">0.801</span>
+vs. <span class="math inline">0.801</span>) or OOS-loss (<span
+class="math inline">+0.011</span>, <span class="math inline">[-0.001,
++0.023]</span>); it wins only on fragile (<span
+class="math inline">+0.072</span>, <span class="math inline">[+0.050,
++0.094]</span>), where the PSR is at chance. In two dimensions the
+picture is cleaner: the combination significantly beats every single
+diagnostic in its feature set on every label (vs. DSR: <span
+class="math inline">+0.039</span> no-edge, <span
+class="math inline">+0.093</span> fragile, <span
+class="math inline">+0.037</span> OOS-loss; all intervals exclude zero),
+reaching AUC <span class="math inline">0.774</span>/<span
+class="math inline">0.664</span>/<span class="math inline">0.692</span>.
+One honest caveat: the feature set was fixed in advance to the folklore
+comparison (shape metrics <span class="math inline">+</span> PBO <span
+class="math inline">+</span> DSR), and in <span
+class="math inline">d{=}2</span> the outlier gap <em>alone</em> (AUC
+<span class="math inline">0.837</span>) beats this combination on
+no-edge—so the combination numbers understate what a fuller model could
+do, and we report them as a test of the “shape complements statistics”
+claim, not as a best-possible detector.</p>
+<figure id="fig:comp" data-latex-placement="t">
+<img src="/figures/fig_complementarity.svg" style="width:70.0%" />
+<figcaption>Cross-validated AUC of single diagnostics versus a logistic
+combination of plateau and statistical features (one parameter; error
+bars are <span class="math inline">95\%</span> bootstrap confidence
+intervals). The combination significantly improves on the DSR for
+no-edge and OOS-loss but not for fragile, and is statistically
+indistinguishable from the plain PSR everywhere except the fragile mode,
+where the PSR is at chance.</figcaption>
+</figure>
+<h2 id="sec:dimension">Dimensionality helps the geometry, with a
+caveat</h2>
+<p>The right half of Table <a href="#tab:auc" data-reference-type="ref"
+data-reference="tab:auc">1</a> repeats the analysis with two
+hyperparameters. Overfitting is worse—base rates of every failure mode
+rise—and the geometry gains traction: the robustness score’s no-edge AUC
+rises from <span class="math inline">0.501</span> to <span
+class="math inline">0.558</span> and its fragile AUC from <span
+class="math inline">0.520</span> to <span
+class="math inline">0.585</span>; curvature becomes the single best
+fragile detector (<span class="math inline">0.635</span>); and the
+amplitude-style outlier gap strengthens most (<span
+class="math inline">0.703 \to 0.837</span>), overtaking every
+statistical diagnostic for no-edge and OOS-loss detection. The
+significance tests weaken slightly (PSR <span class="math inline">0.808
+\to 0.759</span>) as the grid grows from <span
+class="math inline">41</span> to <span
+class="math inline">1{,}681</span> correlated trials. The combined
+classifier’s advantage over the best single statistical diagnostic
+widens accordingly (Section <a href="#sec:complementarity"
+data-reference-type="ref" data-reference="sec:complementarity">5.2</a>),
+and the fragile mode—where shape information lives—is detected at <span
+class="math inline">0.664</span> versus at most <span
+class="math inline">0.585</span> for any statistical diagnostic alone.
+The caveat: even in <span class="math inline">d{=}2</span> the shape
+metrics on their own remain modest (<span
+class="math inline">0.5</span>–<span class="math inline">0.6</span>);
+what grows with dimensionality is their <em>marginal</em> value in
+combination, and the amplitude signal, not standalone shape-based
+detection.</p>
+<h2 id="sec:anchoring">Anchoring matters: geometry inverts at the naive
+optimum</h2>
+<p>The plateau geometry above is measured at the surrogate’s own argmax,
+while the labels describe the naive selection. This is the heuristic’s
+intended use (assess the denoised landscape, then act on it), but it is
+a choice, and we quantify it: every experiment also records the same
+metrics anchored at the <em>naive</em> argmax on the same surrogate.
+Anchored there, the geometry inverts: the robustness score’s no-edge AUC
+falls from <span class="math inline">0.501</span> to <span
+class="math inline">0.418</span> in one dimension and from <span
+class="math inline">0.558</span> to <span
+class="math inline">0.203</span> in two—decisively anti-informative. The
+mechanism is instructive. On a no-edge landscape the surrogate around
+the noise-selected point is flat, so naive-anchored geometry reports a
+wide, benign plateau precisely when the selection is pure luck; when a
+real edge exists the surrogate has structure and the same metrics report
+more fragility. Plateau geometry is a property of the denoised landscape
+at its own optimum, not of whatever point the optimizer returned;
+practitioners who compute plateau metrics around the raw optimizer
+output—the most natural implementation—should expect the inverted
+behavior.</p>
+<h2 id="sec:selection">As a selection rule, “prefer plateaus” works</h2>
+<p>The practical question is not only whether geometry diagnoses
+overfitting but whether <em>acting</em> on it helps. Table <a
+href="#tab:selection" data-reference-type="ref"
+data-reference="tab:selection">2</a> and Figure <a href="#fig:selection"
+data-reference-type="ref" data-reference="fig:selection">4</a> compare
+the naive and plateau-aware selection rules out of sample. Preferring
+the surrogate optimum raises mean OOS Sharpe from <span
+class="math inline">1.12</span> to <span class="math inline">1.24</span>
+in one dimension (<span class="math inline">+0.115</span>; Wilcoxon
+<span class="math inline">p \approx 7\times10^{-19}</span>) and from
+<span class="math inline">0.86</span> to <span
+class="math inline">1.17</span> in two (<span
+class="math inline">+0.307</span>; <span class="math inline">p \approx
+4\times10^{-71}</span>). In <span class="math inline">d{=}1</span> the
+two rules pick the same cell in <span class="math inline">21\%</span> of
+experiments; among non-ties the plateau-aware rule wins <span
+class="math inline">56\%</span> of the time with a median gain of <span
+class="math inline">+0.144</span>. The gain rises monotonically with the
+curvature of the surrogate at its optimum: <span
+class="math inline">+0.062</span> in the flattest tercile (one-sample
+<span class="math inline">t</span>-test <span class="math inline">p =
+0.005</span>), <span class="math inline">+0.107</span> in the middle,
+<span class="math inline">+0.177</span> in the sharpest for <span
+class="math inline">d{=}1</span>; and <span
+class="math inline">+0.091</span>/<span
+class="math inline">+0.257</span>/<span
+class="math inline">+0.575</span> for <span
+class="math inline">d{=}2</span> (all <span class="math inline">p &lt;
+10^{-3}</span>). The rule is targeted insurance against the sharp-peak
+failure mode, and on these landscapes the insurance costs nothing: even
+in the smoothest tercile, where it should be least needed, the expected
+payoff is small but positive rather than zero.</p>
+<p>Two qualifications keep this honest. First, the baseline is the
+weakest defensible one—the raw argmax of an unsmoothed noisy surface—so
+the result demonstrates the value of <em>denoised selection</em>, of
+which “prefer plateaus” is one instance, not superiority over any
+sophisticated alternative. Second, the magnitude depends on the
+surrogate bandwidth (Figure <a href="#fig:selection"
+data-reference-type="ref" data-reference="fig:selection">4</a>, right).
+In <span class="math inline">d{=}1</span> the mean gain is <span
+class="math inline">+0.100</span>, <span
+class="math inline">+0.106</span>, and <span
+class="math inline">+0.089</span> at bandwidths <span
+class="math inline">0.045</span>, <span class="math inline">0.06</span>,
+and <span class="math inline">0.075</span>, decays to <span
+class="math inline">+0.040</span> at <span
+class="math inline">0.09</span> and <span
+class="math inline">+0.017</span> at <span
+class="math inline">0.12</span>, and turns negative (<span
+class="math inline">-0.041</span>) at <span
+class="math inline">0.16</span>, where smoothing erases real structure;
+the sign flips at roughly <span class="math inline">0.14</span> of the
+axis. In <span class="math inline">d{=}2</span> the gain is positive
+across the entire tested range (from <span
+class="math inline">+0.381</span> at bandwidth <span
+class="math inline">0.045</span> to <span
+class="math inline">+0.151</span> at <span
+class="math inline">0.16</span>). Finally, an implementation note: an
+earlier version of our surrogate used boundary-replicating padding,
+which inflates noise variance at the grid edges and piles the “robust”
+selection onto boundary cells of flat landscapes; fixing this
+(mask-normalized smoothing, Section <a href="#sec:framework"
+data-reference-type="ref" data-reference="sec:framework">3</a>) raised
+the mean gains and made the flattest-tercile payoff positive. Geometry
+heuristics inherit the artifacts of the smoother they are computed
+on.</p>
+<div id="tab:selection">
+<table>
+<caption>Out-of-sample Sharpe of naive vs. plateau-aware selection. Ties
+are experiments where both rules select the same grid cell; tercile rows
+split experiments by the curvature of the surrogate at its optimum. All
+tercile gains differ from zero at <span class="math inline">p \le
+0.005</span> (one-sample <span
+class="math inline">t</span>-tests).</caption>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: center;">One parameter</th>
+<th style="text-align: center;">Two parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Naive argmax (mean OOS Sharpe)</td>
+<td style="text-align: center;">1.123</td>
+<td style="text-align: center;">0.862</td>
+</tr>
+<tr>
+<td style="text-align: left;">Plateau-aware (mean OOS Sharpe)</td>
+<td style="text-align: center;">1.238</td>
+<td style="text-align: center;">1.170</td>
+</tr>
+<tr>
+<td style="text-align: left;">Mean gain</td>
+<td style="text-align: center;"><span
+class="math inline">+0.115</span></td>
+<td style="text-align: center;"><span
+class="math inline">+0.307</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">Median gain (non-tie pairs)</td>
+<td style="text-align: center;"><span
+class="math inline">+0.144</span></td>
+<td style="text-align: center;"><span
+class="math inline">+0.280</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">Win rate / ties / non-tie win rate</td>
+<td style="text-align: center;">0.44 / 0.21 / 0.56</td>
+<td style="text-align: center;">0.59 / 0.04 / 0.61</td>
+</tr>
+<tr>
+<td style="text-align: left;">Gain, low-curvature tercile</td>
+<td style="text-align: center;"><span
+class="math inline">+0.062</span></td>
+<td style="text-align: center;"><span
+class="math inline">+0.091</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">Gain, mid-curvature tercile</td>
+<td style="text-align: center;"><span
+class="math inline">+0.107</span></td>
+<td style="text-align: center;"><span
+class="math inline">+0.257</span></td>
+</tr>
+<tr>
+<td style="text-align: left;">Gain, high-curvature tercile</td>
+<td style="text-align: center;"><span
+class="math inline">+0.177</span></td>
+<td style="text-align: center;"><span
+class="math inline">+0.575</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<figure id="fig:selection" data-latex-placement="t">
+<img src="/figures/fig_selection.svg" />
+<figcaption>Out-of-sample gain of plateau-aware over naive selection
+(one parameter). Left: gain by tercile of the surrogate curvature <em>at
+the surrogate optimum</em> (error bars: standard errors)—the gain is
+positive in every tercile and largest where that optimum is a sharp
+peak. Right: the gain versus surrogate bandwidth; a moderate bandwidth
+is best, and over-smoothing eventually turns the average gain negative
+in one dimension.</figcaption>
+</figure>
+<h1 id="discussion">Discussion</h1>
+<p>The results reconcile two views that are usually stated as
+competitors, but not in the way the folklore expects. The statistical
+school treats overfitting as a multiple-testing problem; the geometric
+school treats it as a fragility problem and inspects the shape of the
+optimum. Three honest lessons emerge. First, for <em>detecting</em> a
+worthless selection, the workhorse is the plain significance test: the
+PSR against zero is the strongest single diagnostic here, and the DSR’s
+multiplicity deflation—with trials as correlated as a grid
+scan—contributes calibration, not ranking power. Second, the plateau
+heuristic’s <em>shape</em> metrics and rule-of-thumb thresholds are weak
+or uncalibrated as standalone tests, and become actively misleading if
+anchored at the raw optimizer output; what survives of the diagnostic
+intuition is the amplitude check (does the top of the denoised landscape
+clear the typical level?) and a complementary contribution on the
+fragile mode, mainly in higher dimension. Third, the heuristic’s
+<em>action</em>—select the optimum of a denoised landscape rather than
+the raw argmax—is the clearest win: a real, monotone-in-sharpness
+out-of-sample improvement that grows with the number of parameters.
+“Prefer plateaus” is best understood not as a test but as a regularizer
+on selection.</p>
+<h1 id="limitations">Limitations</h1>
+<p>Our generative model uses Gaussian, serially independent returns with
+a single shared factor; real returns have fat tails, volatility
+clustering, regime shifts, and richer dependence that all amplify
+overfitting and may change the relative ranking of diagnostics. We model
+the optimizer as exhaustive grid evaluation plus a fixed-bandwidth
+smoothing surrogate; an adaptive sampler (e.g. TPE or Gaussian
+processes) explores unevenly and would interact with the geometry
+metrics differently. The labels and thresholds, while
+ground-truth-based, involve choices (<span
+class="math inline">\delta</span>, the surrogate bandwidth, the label
+cutoffs); we stated the a-priori rationale for the bandwidth, showed the
+AUC conclusions are stable across label cutoffs (Section <a
+href="#sec:setup" data-reference-type="ref"
+data-reference="sec:setup">4</a>), and reported rather than hid the
+bandwidth dependence of the selection gain, including the sign change
+near <span class="math inline">0.14</span> of the axis in one dimension.
+The DSR is computed with <span class="math inline">N</span> equal to the
+full grid size despite correlated trials; the <span
+class="math inline">N_{\text{eff}}</span> sensitivity check (Section <a
+href="#sec:diagnostic" data-reference-type="ref"
+data-reference="sec:diagnostic">5.1</a>) suggests this does not drive
+the comparison. Finally, we study Sharpe-based selection on a single
+asset; portfolio-level and turnover/cost-aware objectives are left to
+future work.</p>
+<h1 id="conclusion">Conclusion</h1>
+<p>We gave the plateau-versus-peak heuristic of trading-strategy
+optimization its first controlled validation against ground truth and
+against the standard backtest-overfitting diagnostics. As standalone
+overfitting tests, the local plateau-<em>shape</em> metrics are weak,
+their popular fixed thresholds are not calibrated, and the strongest
+single diagnostic is the plain probabilistic Sharpe ratio against
+zero—the significance test, not the multiplicity deflation, carries the
+detection signal in this setting. Geometry contributes where shape
+information exists: the (re-posed) outlier gap is the best no-edge
+detector in two dimensions, and combining shape metrics with statistical
+diagnostics significantly improves fragile-mode detection. Acting on the
+geometry—selecting the optimum of the denoised landscape rather than the
+raw argmax—delivers a real, targeted out-of-sample improvement that is
+positive in every curvature tercile and grows with dimensionality.
+Prefer plateaus as a selection bias; do not rely on them as a test; and
+pair them with a significance test, which sees the failure mode that
+shape cannot.</p>
+<h4 id="reproducibility.">Reproducibility.</h4>
+<p>All experiments are deterministic given the released seeds. A single
+command (<code>python scripts/run_all.py</code>) regenerates every
+number—including the bootstrap confidence intervals and sensitivity
+checks—and <code>python -m plateau_experiments.figures</code>
+regenerates every figure; a companion script
+(<code>scripts/check_paper_numbers.py</code>) asserts that every value
+quoted in this paper’s tables and text matches the generated results.
+The implementation of the metrics, the PBO/CSCV, PSR and DSR baselines,
+and the simulation is provided as an open-source package.</p>
+<h1 id="references">References</h1><div id="refs" class="references csl-bib-body hanging-indent"
+role="list">
+<div id="ref-akiba2019optuna" class="csl-entry" role="listitem">
+Akiba, Takuya, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori
+Koyama. 2019. <span>“Optuna: A Next-Generation Hyperparameter
+Optimization Framework.”</span> <em>Proceedings of the 25th ACM SIGKDD
+International Conference on Knowledge Discovery &amp; Data Mining</em>,
+2623–31.
+</div>
+<div id="ref-arnott2019protocol" class="csl-entry" role="listitem">
+Arnott, Robert D., Campbell R. Harvey, and Harry Markowitz. 2019.
+<span>“A Backtesting Protocol in the Era of Machine Learning.”</span>
+<em>Journal of Financial Data Science</em> 1 (1): 64–74.
+</div>
+<div id="ref-bailey2017pbo" class="csl-entry" role="listitem">
+Bailey, David H., Jonathan M. Borwein, Marcos López de Prado, and Qiji
+Jim Zhu. 2017. <span>“The Probability of Backtest Overfitting.”</span>
+<em>Journal of Computational Finance</em> 20 (4): 39–69.
+</div>
+<div id="ref-bailey2012psr" class="csl-entry" role="listitem">
+Bailey, David H., and Marcos López de Prado. 2012. <span>“The Sharpe
+Ratio Efficient Frontier.”</span> <em>Journal of Risk</em> 15 (2): 3–44.
+</div>
+<div id="ref-bailey2014dsr" class="csl-entry" role="listitem">
+Bailey, David H., and Marcos López de Prado. 2014. <span>“The Deflated
+Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and
+Non-Normality.”</span> <em>Journal of Portfolio Management</em> 40 (5):
+94–107.
+</div>
+<div id="ref-harvey2015backtesting" class="csl-entry" role="listitem">
+Harvey, Campbell R., and Yan Liu. 2015. <span>“Backtesting.”</span>
+<em>Journal of Portfolio Management</em> 42 (1): 13–28.
+</div>
+<div id="ref-harvey2016crosssection" class="csl-entry" role="listitem">
+Harvey, Campbell R., Yan Liu, and Heqing Zhu. 2016.
+<span>“<span>…</span> and the Cross-Section of Expected Returns.”</span>
+<em>Review of Financial Studies</em> 29 (1): 5–68.
+</div>
+<div id="ref-hochreiter1997flat" class="csl-entry" role="listitem">
+Hochreiter, Sepp, and Jürgen Schmidhuber. 1997. <span>“Flat
+Minima.”</span> <em>Neural Computation</em> 9 (1): 1–42.
+</div>
+<div id="ref-hutter2014fanova" class="csl-entry" role="listitem">
+Hutter, Frank, Holger Hoos, and Kevin Leyton-Brown. 2014. <span>“An
+Efficient Approach for Assessing Hyperparameter Importance.”</span>
+<em>Proceedings of the 31st International Conference on Machine Learning
+(ICML)</em>, 754–62.
+</div>
+<div id="ref-keskar2017sharp" class="csl-entry" role="listitem">
+Keskar, Nitish Shirish, Dheevatsa Mudigere, Jorge Nocedal, Mikhail
+Smelyanskiy, and Ping Tak Peter Tang. 2017. <span>“On Large-Batch
+Training for Deep Learning: Generalization Gap and Sharp Minima.”</span>
+<em>International Conference on Learning Representations (ICLR)</em>.
+</div>
+<div id="ref-lopezdeprado2018" class="csl-entry" role="listitem">
+López de Prado, Marcos. 2018. <em>Advances in Financial Machine
+Learning</em>. John Wiley &amp; Sons.
+</div>
+<div id="ref-pardo2008" class="csl-entry" role="listitem">
+Pardo, Robert. 2008. <em>The Evaluation and Optimization of Trading
+Strategies</em>. 2nd ed. John Wiley &amp; Sons.
+</div>
+<div id="ref-soloviov2026plateau" class="csl-entry" role="listitem">
+Soloviov, Eugen. 2026. <em>Plateau Analysis: How to Distinguish a Robust
+Optimum from Overfitting</em>. Practitioner article, marketmaker.cc. <a
+href="https://marketmaker.cc/blog/plateau-analysis-overfitting">https://marketmaker.cc/blog/plateau-analysis-overfitting</a>.
+</div>
+<div id="ref-white2000reality" class="csl-entry" role="listitem">
+White, Halbert. 2000. <span>“A Reality Check for Data Snooping.”</span>
+<em>Econometrica</em> 68 (5): 1097–126.
+</div>
+</div>
+<section id="footnotes" class="footnotes footnotes-end-of-document"
+role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1"><p>The specific scalar metrics we validate—robustness
+score, plateau width, sensitivity, and the top-versus-typical outlier
+check—follow the author’s earlier practitioner article <span
+class="citation" data-cites="soloviov2026plateau">(Soloviov
+2026)</span>, where they were proposed without ground-truth validation;
+the present paper subjects them to their first controlled test.<a
+href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

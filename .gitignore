@@ -15,3 +15,6 @@ paper/main.blg
 # derived submission bundle (regenerated from paper/)
 arxiv_submission/
 arxiv_submission.tar.gz
+website/dist/
+website/node_modules/
+website/.astro/
