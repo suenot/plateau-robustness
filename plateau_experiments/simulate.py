@@ -36,10 +36,20 @@ def surrogate_surface(sr_is: np.ndarray, cfg: SurfaceConfig, bandwidth_frac: flo
     landscape through a surrogate (Optuna's contour/slice plots and fANOVA
     effectively smooth across trials). We model that surrogate with a Gaussian
     kernel of fixed disclosed bandwidth and assess plateau geometry on it.
+
+    Boundary handling: we use *normalized (mask-corrected) smoothing* --
+    zero-padded convolution divided by the same convolution of a ones mask --
+    so every cell is an unbiased weighted average of the observed cells only.
+    The previously used ``mode="nearest"`` padding effectively piled ~half the
+    kernel mass onto the single boundary value, inflating the noise variance at
+    the edges and making the surrogate argmax pile up there under flat-null
+    surfaces (an artifact, not a property of the landscapes).
     """
     grid = sr_is.reshape((cfg.grid_size,) * cfg.dim)
     sigma = bandwidth_frac * (cfg.grid_size - 1)
-    return gaussian_filter(grid, sigma=sigma, mode="nearest").ravel()
+    num = gaussian_filter(grid, sigma=sigma, mode="constant", cval=0.0)
+    den = gaussian_filter(np.ones_like(grid), sigma=sigma, mode="constant", cval=0.0)
+    return (num / den).ravel()
 
 
 def run_experiment(
@@ -64,6 +74,11 @@ def run_experiment(
 
     # --- diagnostics: plateau geometry on the surrogate, stats on raw ---
     pm = plateau_metrics(surrogate, cfg, delta_sharpe=delta_sharpe)
+    # anchoring variant: same surrogate geometry, but measured at the *naive*
+    # (raw argmax) selection rather than the surrogate argmax -- documents how
+    # sensitive the diagnostics are to where the geometry is anchored.
+    naive_multi = np.unravel_index(naive, (cfg.grid_size,) * cfg.dim)
+    pm_naive = plateau_metrics(surrogate, cfg, delta_sharpe=delta_sharpe, at_index=naive_multi)
     pbo = pbo_cscv(r_is, s_blocks=pbo_blocks)
     is_sharpes_per_obs = sr_is / np.sqrt(cfg.periods_per_year)
     dsr = deflated_sharpe(r_is[:, naive], is_sharpes_per_obs, n_trials=sr_is.size)
@@ -97,8 +112,13 @@ def run_experiment(
         "sensitivity": pm["sensitivity"],
         "max_sensitivity": pm["max_sensitivity"],
         "curvature": pm["curvature"],
-        "outlier_ratio": pm["outlier_ratio"],
+        "outlier_gap": pm["outlier_gap"],
         "peak_is_sharpe": pm["peak_is_sharpe"],
+        # same geometry anchored at the naive (raw argmax) point
+        "robustness_score_naive_anchor": pm_naive["robustness_score"],
+        "plateau_width_naive_anchor": pm_naive["plateau_width"],
+        "sensitivity_naive_anchor": pm_naive["sensitivity"],
+        "curvature_naive_anchor": pm_naive["curvature"],
         # statistical baselines
         "pbo": pbo["pbo"],
         "pbo_logit_mean": pbo["logit_mean"],

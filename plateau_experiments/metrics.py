@@ -121,15 +121,19 @@ def plateau_metrics(
     delta_sharpe: float = 0.25,
     step_frac: float = 0.10,
     eps: float = 1e-3,
+    at_index: tuple[int, ...] | None = None,
 ) -> dict:
     """Compute the full plateau-robustness bundle from an IS-Sharpe surface.
 
     ``delta_sharpe`` is the absolute annualized-Sharpe margin defining the
     plateau super-level set (peak minus margin). ``step_frac`` is the relative
-    step used by the sensitivity drop.
+    step used by the sensitivity drop. ``at_index`` (a grid multi-index)
+    optionally anchors all local geometry at that point instead of the argmax
+    of ``surface`` -- used to measure the geometry around the *naive* (raw
+    argmax) selection on the surrogate, documenting anchoring sensitivity.
     """
     grid = _as_grid(surface, cfg)
-    opt = _opt_index(grid)
+    opt = tuple(int(i) for i in at_index) if at_index is not None else _opt_index(grid)
     peak = float(grid[opt])
     threshold = peak - delta_sharpe
 
@@ -145,12 +149,18 @@ def plateau_metrics(
     log_score = float(np.sum(weights * np.log(np.maximum(widths_arr, eps))))
     robustness_score = float(np.exp(log_score))
 
-    # cheap extra diagnostic from the article: are the best points outliers?
+    # cheap extra diagnostic from the article: are the best points outliers
+    # relative to typical performance? The article uses the ratio top3/median,
+    # which is ill-posed whenever the median Sharpe is ~0 or negative -- exactly
+    # the no-edge landscapes -- and returning inf there silently biased every
+    # downstream analysis to the cases with a real edge. We therefore use the
+    # *difference* top3 - median ("outlier gap"), which preserves the intent
+    # and is finite and well-defined on every surface.
     flat = surface[np.isfinite(surface)]
     top = np.sort(flat)[::-1]
     top3 = float(np.mean(top[:3])) if top.size >= 3 else float(top.max())
     med = float(np.median(flat))
-    outlier_ratio = top3 / med if med > 1e-6 else float("inf")
+    outlier_gap = top3 - med
 
     return {
         "opt_index": opt,
@@ -161,7 +171,7 @@ def plateau_metrics(
         "sensitivity": float(np.dot(weights, np.asarray(sens))),
         "max_sensitivity": float(np.max(sens)),
         "curvature": float(np.dot(weights, np.asarray(curv))),
-        "outlier_ratio": outlier_ratio,
+        "outlier_gap": outlier_gap,
         "per_axis": {
             "weights": weights.tolist(),
             "widths": widths,

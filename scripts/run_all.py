@@ -28,18 +28,16 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 
 
-def bandwidth_sweep(n: int, seed: int, bandwidths: list[float]) -> list[dict]:
+def bandwidth_sweep(n: int, seed: int, bandwidths: list[float], dim: int = 1) -> list[dict]:
     """Mean OOS gain of plateau-aware selection over naive argmax, vs surrogate
     bandwidth — to show the selection benefit is not a knife-edge artifact."""
     out = []
     for bw in bandwidths:
         ss = np.random.SeedSequence(seed).spawn(n)
-        gains, gains_hi = [], []
-        curvs = []
         recs = []
         for cs in ss:
             rng = np.random.default_rng(cs)
-            cfg = sample_surface_config(rng, dim=1)
+            cfg = sample_surface_config(rng, dim=dim)
             recs.append(run_experiment(cfg, rng, bandwidth_frac=bw))
         import pandas as pd
         df = pd.DataFrame(recs)
@@ -73,9 +71,12 @@ def main() -> None:
     df2 = A.to_frame(rec2)
     df2.to_csv(RESULTS / "records_dim2.csv", index=False)
 
-    print("[3/4] bandwidth sensitivity sweep ...", flush=True)
-    sweep = bandwidth_sweep(1500 if not args.quick else 400, seed=303,
-                            bandwidths=[0.03, 0.045, 0.06, 0.09, 0.12, 0.16])
+    print("[3/4] bandwidth sensitivity sweeps (d=1, d=2) ...", flush=True)
+    bandwidths = [0.03, 0.045, 0.06, 0.075, 0.09, 0.12, 0.16]
+    sweep1 = bandwidth_sweep(1500 if not args.quick else 400, seed=303,
+                             bandwidths=bandwidths, dim=1)
+    sweep2 = bandwidth_sweep(600 if not args.quick else 200, seed=404,
+                             bandwidths=bandwidths, dim=2)
 
     print("[4/4] summaries ...", flush=True)
     results = {
@@ -84,27 +85,28 @@ def main() -> None:
             "python": platform.python_version(),
             "numpy": np.__version__,
             "n_dim1": n1, "n_dim2": n2,
-            "seeds": {"dim1": 101, "dim2": 202, "sweep": 303},
+            "seeds": {"dim1": 101, "dim2": 202, "sweep_dim1": 303, "sweep_dim2": 404},
             "notes": "Deterministic; reproduce with python scripts/run_all.py",
         },
         "dim1": A.summarize(df1),
         "dim2": A.summarize(df2),
-        "bandwidth_sweep": sweep,
+        "bandwidth_sweep": {"dim1": sweep1, "dim2": sweep2},
     }
     (RESULTS / "results.json").write_text(json.dumps(results, indent=2, default=float))
     print(f"\nWrote {RESULTS/'results.json'} and record CSVs.")
 
     # headline lines to stdout
-    d = results["dim1"]
-    print("\n--- dim=1 headline ---")
-    print("AUC (no_edge / fragile / oos_loss):")
-    for r in d["auc"]:
-        if r["diagnostic"] in ("robustness_score", "curvature", "pbo", "dsr"):
-            print(f"  {r['diagnostic']:16} {r['auc_no_edge']:.3f} {r['auc_fragile']:.3f} {r['auc_oos_loss']:.3f}")
-    print("combined AUC:", [(r["features"], round(r["auc"], 3)) for r in d["combined_auc"] if r["label"] == "no_edge"])
-    sp = d["selection_payoff"]
-    print(f"selection: naive {sp['mean_oos_naive']:.3f} -> robust {sp['mean_oos_robust']:.3f} "
-          f"(gain {sp['mean_oos_gain']:+.3f}, high-curv {sp['oos_gain_high_curvature']:+.3f})")
+    for dname in ("dim1", "dim2"):
+        d = results[dname]
+        print(f"\n--- {dname} headline ---")
+        print("AUC (no_edge / fragile / oos_loss):")
+        for r in d["auc"]:
+            if r["diagnostic"] in ("robustness_score", "curvature", "outlier_gap", "pbo", "dsr", "psr0"):
+                print(f"  {r['diagnostic']:16} {r['auc_no_edge']:.3f} {r['auc_fragile']:.3f} {r['auc_oos_loss']:.3f}")
+        print("combined AUC:", [(r["features"], round(r["auc"], 3)) for r in d["combined_auc"] if r["label"] == "no_edge"])
+        sp = d["selection_payoff"]
+        print(f"selection: naive {sp['mean_oos_naive']:.3f} -> robust {sp['mean_oos_robust']:.3f} "
+              f"(gain {sp['mean_oos_gain']:+.3f}, high-curv {sp['oos_gain_high_curvature']:+.3f})")
 
 
 if __name__ == "__main__":

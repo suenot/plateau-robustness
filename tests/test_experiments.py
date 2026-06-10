@@ -82,5 +82,59 @@ def test_metric_bundle_keys():
     sr_true = true_sharpe_surface(cfg)
     r = simulate_returns(sr_true, cfg.t_is, cfg, np.random.default_rng(0))
     m = plateau_metrics(sharpe(r), cfg)
-    for k in ("robustness_score", "plateau_width", "sensitivity", "curvature", "outlier_ratio"):
+    for k in ("robustness_score", "plateau_width", "sensitivity", "curvature", "outlier_gap"):
         assert k in m and np.isfinite(m[k])
+
+
+def test_surrogate_preserves_constant_surface():
+    """Normalized smoothing is exactly mean-preserving on a flat surface."""
+    from plateau_experiments.simulate import surrogate_surface
+    cfg = canonical_configs()["null"]
+    flat = np.full(cfg.grid_size, 0.7)
+    s = surrogate_surface(flat, cfg, 0.06)
+    assert np.allclose(s, 0.7, atol=1e-10)
+
+
+def test_surrogate_edge_pileup_reduced():
+    """Under a flat-null (pure noise) surface the surrogate argmax must not pile
+    up at the grid edges the way mode='nearest' smoothing did (~40% in the
+    outer 3 cells/side vs 14.6% uniform). Normalized smoothing leaves only the
+    irreducible boundary-variance effect (~30%); guard against regression."""
+    from plateau_experiments.simulate import surrogate_surface
+    cfg = canonical_configs()["null"]
+    n = cfg.grid_size
+    rng = np.random.default_rng(0)
+    edge = set(range(3)) | set(range(n - 3, n))
+    hits = sum(
+        int(np.argmax(surrogate_surface(rng.standard_normal(n), cfg, 0.06))) in edge
+        for _ in range(3000)
+    )
+    assert hits / 3000 < 0.34  # mode="nearest" gives ~0.40
+
+
+def test_outlier_gap_finite_on_no_edge_surfaces():
+    """The old top3/median ratio blew up to inf when the median Sharpe was ~0
+    (the no-edge cases). The gap (top3 - median) must be finite everywhere."""
+    cfg = canonical_configs()["null"]
+    for s in range(20):
+        rec = run_experiment(cfg, np.random.default_rng(s))
+        assert np.isfinite(rec["outlier_gap"])
+    # degenerate flat surface too
+    m = plateau_metrics(np.zeros(cfg.grid_size), cfg)
+    assert np.isfinite(m["outlier_gap"]) and m["outlier_gap"] == 0.0
+
+
+def test_naive_anchor_metrics():
+    """plateau_metrics(at_index=...) anchors the geometry at the given point;
+    anchoring at the argmax must reproduce the default."""
+    cfg = canonical_configs()["mixed"]
+    sr_true = true_sharpe_surface(cfg)
+    r = simulate_returns(sr_true, cfg.t_is, cfg, np.random.default_rng(5))
+    surf = sharpe(r)
+    m_def = plateau_metrics(surf, cfg)
+    m_at = plateau_metrics(surf, cfg, at_index=m_def["opt_index"])
+    assert m_at["robustness_score"] == m_def["robustness_score"]
+    rec = run_experiment(cfg, np.random.default_rng(5))
+    for k in ("robustness_score_naive_anchor", "plateau_width_naive_anchor",
+              "sensitivity_naive_anchor", "curvature_naive_anchor"):
+        assert k in rec and np.isfinite(rec[k])
