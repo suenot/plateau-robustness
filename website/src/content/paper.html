@@ -3,32 +3,29 @@
 data is an invitation to overfit. With enough configurations tried, some
 will look excellent in sample purely by chance and collapse out of
 sample <span class="citation"
-data-cites="bailey2017pbo harvey2016crosssection lopezdeprado2018">(Bailey
-et al. 2017; Harvey et al. 2016; López de Prado 2018)</span>. The
-standard statistical responses correct the <em>selected</em> performance
-for the number of trials and for non-normality—the Deflated Sharpe Ratio
-(DSR) <span class="citation" data-cites="bailey2014dsr">(Bailey and
-López de Prado 2014)</span>, the Probability of Backtest Overfitting
-(PBO) <span class="citation" data-cites="bailey2017pbo">(Bailey et al.
-2017)</span>, and data-snooping reality checks <span class="citation"
-data-cites="white2000reality harvey2015backtesting">(White 2000; Harvey
-and Liu 2015)</span>.</p>
+data-cites="bailey2017pbo harvey2016crosssection lopezdeprado2018">[3,
+7, 11]</span>. The standard statistical responses correct the
+<em>selected</em> performance for the number of trials and for
+non-normality—the Deflated Sharpe Ratio (DSR) <span class="citation"
+data-cites="bailey2014dsr">[5]</span>, the Probability of Backtest
+Overfitting (PBO) <span class="citation"
+data-cites="bailey2017pbo">[3]</span>, and data-snooping reality checks
+<span class="citation"
+data-cites="white2000reality harvey2015backtesting">[6, 14]</span>.</p>
 <p>A second, more geometric piece of advice circulates widely in
 practitioner writing <span class="citation"
-data-cites="pardo2008 lopezdeprado2018 arnott2019protocol">(Pardo 2008;
-López de Prado 2018; Arnott et al. 2019)</span>: do not just take the
-best parameter set, look at the <em>shape</em> of the objective around
-it. A broad “plateau” of similar performance is presumed robust; a
-narrow “peak” that collapses one grid step away is presumed to be fitted
-noise. The intuition mirrors the flat-minima literature in machine
-learning, where wide minima are argued to generalize better than sharp
-ones <span class="citation"
-data-cites="hochreiter1997flat keskar2017sharp">(Hochreiter and
-Schmidhuber 1997; Keskar et al. 2017)</span>. Modern hyperparameter
-tooling makes the geometry easy to inspect—slice plots, contour
-heatmaps, and functional ANOVA importances <span class="citation"
-data-cites="hutter2014fanova akiba2019optuna">(Hutter et al. 2014; Akiba
-et al. 2019)</span>—and several authors propose scalar “plateau metrics”
+data-cites="pardo2008 lopezdeprado2018 arnott2019protocol">[2, 11,
+12]</span>: do not just take the best parameter set, look at the
+<em>shape</em> of the objective around it. A broad “plateau” of similar
+performance is presumed robust; a narrow “peak” that collapses one grid
+step away is presumed to be fitted noise. The intuition mirrors the
+flat-minima literature in machine learning, where wide minima are argued
+to generalize better than sharp ones <span class="citation"
+data-cites="hochreiter1997flat keskar2017sharp">[8, 10]</span>. Modern
+hyperparameter tooling makes the geometry easy to inspect—slice plots,
+contour heatmaps, and functional ANOVA importances <span
+class="citation" data-cites="hutter2014fanova akiba2019optuna">[1,
+9]</span>—and several authors propose scalar “plateau metrics”
 (sensitivity ratios, plateau widths, robustness scores) to formalize
 it.<a href="#fn1" class="footnote-ref" id="fnref1"
 role="doc-noteref"><sup>1</sup></a></p>
@@ -119,7 +116,7 @@ in some sources, whose first-derivative term vanishes at an interior
 maximum). The <em>robustness score</em> aggregates widths with
 first-order functional-ANOVA weights <span
 class="math inline">w_i</span> <span class="citation"
-data-cites="hutter2014fanova">(Hutter et al. 2014)</span>: <span
+data-cites="hutter2014fanova">[9]</span>: <span
 class="math display">\begin{equation}
 R \;=\; \prod_{i=1}^{d} W_i^{\,w_i}, \qquad \textstyle\sum_i w_i = 1 .
 \label{eq:R}
@@ -141,15 +138,15 @@ and is well defined everywhere.</p>
 <h4 id="statistical-baselines.">Statistical baselines.</h4>
 <p>We compare against three standard diagnostics computed on the same
 returns. The <em>Probability of Backtest Overfitting</em> <span
-class="citation" data-cites="bailey2017pbo">(Bailey et al. 2017)</span>
-uses combinatorially-symmetric cross-validation (CSCV): the <span
+class="citation" data-cites="bailey2017pbo">[3]</span> uses
+combinatorially-symmetric cross-validation (CSCV): the <span
 class="math inline">T</span> observations are split into <span
 class="math inline">S</span> blocks; over all <span
 class="math inline">\binom{S}{S/2}</span> train/test partitions one
 records the relative out-of-sample rank of the in-sample-best strategy,
 and PBO is the fraction of partitions in which that rank falls below the
 median. The <em>probabilistic Sharpe ratio</em> <span class="citation"
-data-cites="bailey2012psr">(Bailey and López de Prado 2012)</span> <span
+data-cites="bailey2012psr">[4]</span> <span
 class="math inline">\mathrm{PSR}(\mathrm{SR}^{*})</span> is the
 probability that the true Sharpe exceeds a benchmark <span
 class="math inline">\mathrm{SR}^{*}</span>, given the sample length,
@@ -157,8 +154,8 @@ skewness, and kurtosis of the selected strategy’s returns; <span
 class="math inline">\mathrm{PSR}(0)</span> tests significance against
 zero skill with <em>no</em> multiplicity correction. The <em>Deflated
 Sharpe Ratio</em> <span class="citation"
-data-cites="bailey2014dsr">(Bailey and López de Prado 2014)</span> is
-<span class="math inline">\mathrm{PSR}(\mathrm{SR}_0)</span> with the
+data-cites="bailey2014dsr">[5]</span> is <span
+class="math inline">\mathrm{PSR}(\mathrm{SR}_0)</span> with the
 benchmark set to the expected maximum Sharpe of <span
 class="math inline">N</span> independent null trials, <span
 class="math display">\begin{equation}
@@ -176,11 +173,11 @@ class="math inline">41</span> in <span class="math inline">d{=}1</span>,
 class="math inline">d{=}2</span>). This follows common practice but
 overstates the effective number of trials: grid trials are strongly
 correlated (a shared market factor plus a smooth true surface), and
-<span class="citation" data-cites="bailey2014dsr">Bailey and López de
-Prado (2014)</span> prescribe the number of <em>effectively
-independent</em> trials. We disclose this choice and report a
-sensitivity check in Section <a href="#sec:diagnostic"
-data-reference-type="ref" data-reference="sec:diagnostic">5.1</a>.</p>
+<span class="citation" data-cites="bailey2014dsr">[5]</span> prescribe
+the number of <em>effectively independent</em> trials. We disclose this
+choice and report a sensitivity check in Section <a
+href="#sec:diagnostic" data-reference-type="ref"
+data-reference="sec:diagnostic">5.1</a>.</p>
 <h1 id="sec:framework">Simulation framework</h1>
 <p>We treat backtest optimization as selecting from a grid of noisy
 estimates of a known surface. The <em>population</em> annualized-Sharpe
@@ -798,76 +795,95 @@ regenerates every figure; a companion script
 quoted in this paper’s tables and text matches the generated results.
 The implementation of the metrics, the PBO/CSCV, PSR and DSR baselines,
 and the simulation is provided as an open-source package.</p>
-<h1 id="references">References</h1><div id="refs" class="references csl-bib-body hanging-indent"
+<h1 id="references">References</h1><div id="refs" class="references csl-bib-body" data-entry-spacing="1"
 role="list">
 <div id="ref-akiba2019optuna" class="csl-entry" role="listitem">
-Akiba, Takuya, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori
-Koyama. 2019. <span>“Optuna: A Next-Generation Hyperparameter
-Optimization Framework.”</span> <em>Proceedings of the 25th ACM SIGKDD
-International Conference on Knowledge Discovery &amp; Data Mining</em>,
-2623–31.
+<div class="csl-left-margin">[1] </div><div
+class="csl-right-inline">Takuya Akiba, Shotaro Sano, Toshihiko Yanase,
+Takeru Ohta, and Masanori Koyama. Optuna: A next-generation
+hyperparameter optimization framework. In <em>Proceedings of the 25th
+ACM SIGKDD international conference on knowledge discovery &amp; data
+mining</em>, pages 2623–2631, 2019.</div>
 </div>
 <div id="ref-arnott2019protocol" class="csl-entry" role="listitem">
-Arnott, Robert D., Campbell R. Harvey, and Harry Markowitz. 2019.
-<span>“A Backtesting Protocol in the Era of Machine Learning.”</span>
-<em>Journal of Financial Data Science</em> 1 (1): 64–74.
+<div class="csl-left-margin">[2] </div><div
+class="csl-right-inline">Robert D. Arnott, Campbell R. Harvey, and Harry
+Markowitz. A backtesting protocol in the era of machine learning.
+<em>Journal of Financial Data Science</em>, 1(1):64–74, 2019.</div>
 </div>
 <div id="ref-bailey2017pbo" class="csl-entry" role="listitem">
-Bailey, David H., Jonathan M. Borwein, Marcos López de Prado, and Qiji
-Jim Zhu. 2017. <span>“The Probability of Backtest Overfitting.”</span>
-<em>Journal of Computational Finance</em> 20 (4): 39–69.
+<div class="csl-left-margin">[3] </div><div
+class="csl-right-inline">David H. Bailey, Jonathan M. Borwein, Marcos
+López de Prado, and Qiji Jim Zhu. The probability of backtest
+overfitting. <em>Journal of Computational Finance</em>, 20(4):39–69,
+2017.</div>
 </div>
 <div id="ref-bailey2012psr" class="csl-entry" role="listitem">
-Bailey, David H., and Marcos López de Prado. 2012. <span>“The Sharpe
-Ratio Efficient Frontier.”</span> <em>Journal of Risk</em> 15 (2): 3–44.
+<div class="csl-left-margin">[4] </div><div
+class="csl-right-inline">David H. Bailey and Marcos López de Prado. The
+sharpe ratio efficient frontier. <em>Journal of Risk</em>, 15(2):3–44,
+2012.</div>
 </div>
 <div id="ref-bailey2014dsr" class="csl-entry" role="listitem">
-Bailey, David H., and Marcos López de Prado. 2014. <span>“The Deflated
-Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and
-Non-Normality.”</span> <em>Journal of Portfolio Management</em> 40 (5):
-94–107.
+<div class="csl-left-margin">[5] </div><div
+class="csl-right-inline">David H. Bailey and Marcos López de Prado. The
+deflated sharpe ratio: Correcting for selection bias, backtest
+overfitting, and non-normality. <em>Journal of Portfolio
+Management</em>, 40(5):94–107, 2014.</div>
 </div>
 <div id="ref-harvey2015backtesting" class="csl-entry" role="listitem">
-Harvey, Campbell R., and Yan Liu. 2015. <span>“Backtesting.”</span>
-<em>Journal of Portfolio Management</em> 42 (1): 13–28.
+<div class="csl-left-margin">[6] </div><div
+class="csl-right-inline">Campbell R. Harvey and Yan Liu. Backtesting.
+<em>Journal of Portfolio Management</em>, 42(1):13–28, 2015.</div>
 </div>
 <div id="ref-harvey2016crosssection" class="csl-entry" role="listitem">
-Harvey, Campbell R., Yan Liu, and Heqing Zhu. 2016.
-<span>“<span>…</span> and the Cross-Section of Expected Returns.”</span>
-<em>Review of Financial Studies</em> 29 (1): 5–68.
+<div class="csl-left-margin">[7] </div><div
+class="csl-right-inline">Campbell R. Harvey, Yan Liu, and Heqing Zhu.
+<span>…</span> and the cross-section of expected returns. <em>Review of
+Financial Studies</em>, 29(1):5–68, 2016.</div>
 </div>
 <div id="ref-hochreiter1997flat" class="csl-entry" role="listitem">
-Hochreiter, Sepp, and Jürgen Schmidhuber. 1997. <span>“Flat
-Minima.”</span> <em>Neural Computation</em> 9 (1): 1–42.
+<div class="csl-left-margin">[8] </div><div
+class="csl-right-inline">Sepp Hochreiter and Jürgen Schmidhuber. Flat
+minima. <em>Neural Computation</em>, 9(1):1–42, 1997.</div>
 </div>
 <div id="ref-hutter2014fanova" class="csl-entry" role="listitem">
-Hutter, Frank, Holger Hoos, and Kevin Leyton-Brown. 2014. <span>“An
-Efficient Approach for Assessing Hyperparameter Importance.”</span>
-<em>Proceedings of the 31st International Conference on Machine Learning
-(ICML)</em>, 754–62.
+<div class="csl-left-margin">[9] </div><div
+class="csl-right-inline">Frank Hutter, Holger Hoos, and Kevin
+Leyton-Brown. An efficient approach for assessing hyperparameter
+importance. In <em>Proceedings of the 31st international conference on
+machine learning (ICML)</em>, pages 754–762, 2014.</div>
 </div>
 <div id="ref-keskar2017sharp" class="csl-entry" role="listitem">
-Keskar, Nitish Shirish, Dheevatsa Mudigere, Jorge Nocedal, Mikhail
-Smelyanskiy, and Ping Tak Peter Tang. 2017. <span>“On Large-Batch
-Training for Deep Learning: Generalization Gap and Sharp Minima.”</span>
-<em>International Conference on Learning Representations (ICLR)</em>.
+<div class="csl-left-margin">[10] </div><div
+class="csl-right-inline">Nitish Shirish Keskar, Dheevatsa Mudigere,
+Jorge Nocedal, Mikhail Smelyanskiy, and Ping Tak Peter Tang. On
+large-batch training for deep learning: Generalization gap and sharp
+minima. In <em>International conference on learning representations
+(ICLR)</em>, 2017.</div>
 </div>
 <div id="ref-lopezdeprado2018" class="csl-entry" role="listitem">
-López de Prado, Marcos. 2018. <em>Advances in Financial Machine
-Learning</em>. John Wiley &amp; Sons.
+<div class="csl-left-margin">[11] </div><div
+class="csl-right-inline">Marcos López de Prado. <em>Advances in
+financial machine learning</em>. John Wiley &amp; Sons, 2018.</div>
 </div>
 <div id="ref-pardo2008" class="csl-entry" role="listitem">
-Pardo, Robert. 2008. <em>The Evaluation and Optimization of Trading
-Strategies</em>. 2nd ed. John Wiley &amp; Sons.
+<div class="csl-left-margin">[12] </div><div
+class="csl-right-inline">Robert Pardo. <em>The evaluation and
+optimization of trading strategies</em>. John Wiley &amp; Sons,
+2008.</div>
 </div>
 <div id="ref-soloviov2026plateau" class="csl-entry" role="listitem">
-Soloviov, Eugen. 2026. <em>Plateau Analysis: How to Distinguish a Robust
-Optimum from Overfitting</em>. Practitioner article, marketmaker.cc. <a
-href="https://marketmaker.cc/blog/plateau-analysis-overfitting">https://marketmaker.cc/blog/plateau-analysis-overfitting</a>.
+<div class="csl-left-margin">[13] </div><div
+class="csl-right-inline">Eugen Soloviov. <a
+href="https://marketmaker.cc/blog/plateau-analysis-overfitting">Plateau
+analysis: How to distinguish a robust optimum from overfitting</a>.
+Practitioner article, marketmaker.cc, 2026.</div>
 </div>
 <div id="ref-white2000reality" class="csl-entry" role="listitem">
-White, Halbert. 2000. <span>“A Reality Check for Data Snooping.”</span>
-<em>Econometrica</em> 68 (5): 1097–126.
+<div class="csl-left-margin">[14] </div><div
+class="csl-right-inline">Halbert White. A reality check for data
+snooping. <em>Econometrica</em>, 68(5):1097–1126, 2000.</div>
 </div>
 </div>
 <section id="footnotes" class="footnotes footnotes-end-of-document"
@@ -877,9 +893,9 @@ role="doc-endnotes">
 <li id="fn1"><p>The specific scalar metrics we validate—robustness
 score, plateau width, sensitivity, and the top-versus-typical outlier
 check—follow the author’s earlier practitioner article <span
-class="citation" data-cites="soloviov2026plateau">(Soloviov
-2026)</span>, where they were proposed without ground-truth validation;
-the present paper subjects them to their first controlled test.<a
-href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+class="citation" data-cites="soloviov2026plateau">[13]</span>, where
+they were proposed without ground-truth validation; the present paper
+subjects them to their first controlled test.<a href="#fnref1"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
 </ol>
 </section>
